@@ -1,0 +1,70 @@
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13"]
+build-backend = "uv_build"
+
+[project]
+name = "tts-studio"
+version = "0.1.0"
+description = "Local-first text-to-speech studio"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi",
+    "grpcio",
+    "httpx",
+    "pydantic-settings",
+    "protobuf",
+    "tts-studio-protocol",
+    "typer",
+    "uvicorn",
+]
+
+[project.scripts]
+tts = "tts_studio.cli:app"
+
+[dependency-groups]
+dev = [
+    "build",
+    "grpcio-tools",
+    "mypy",
+    "mypy-protobuf>=5.1.0",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "tts-studio-worker-sdk",
+    "types-grpcio>=1.83.0.20260730",
+]
+
+[tool.uv.workspace]
+members = ["packages/protocol", "packages/worker-sdk"]
+
+[tool.uv.sources]
+tts-studio-protocol = { workspace = true }
+tts-studio-worker-sdk = { workspace = true }
+
+[tool.uv.build-backend]
+source-include = ["src/tts_studio/static/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "packages/protocol/tests", "packages/worker-sdk/tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint.per-file-ignores]
+"packages/protocol/src/tts_studio_protocol/engine/v1/*_pb2*.py" = ["F401", "I001", "UP009"]
+"packages/protocol/src/tts_studio_protocol/engine/v1/*_pb2*.pyi" = ["I001", "UP007", "UP035", "UP036", "UP040"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+
+# VieNeu's optional SDK and numerical/audio dependencies are installed only in
+# its locked Worker environment and do not provide analyzable stubs to Core.
+# Keep this boundary excluded without suppressing errors in Core modules.
+exclude = ["workers/vieneu/src"]
+[tool.tts-studio.openapi]
+renderer = "tts-studio-openapi-v1"
+output = "web/src/generated/api.ts"

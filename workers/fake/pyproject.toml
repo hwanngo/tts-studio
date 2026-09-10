@@ -1,0 +1,29 @@
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13"]
+build-backend = "uv_build"
+
+[project]
+name = "tts-studio-fake-worker"
+version = "0.1.0"
+description = "Standalone fake engine worker for TTS Studio integration tests"
+requires-python = ">=3.14"
+dependencies = [
+    "tts-studio-protocol",
+    "tts-studio-worker-sdk",
+]
+
+[project.scripts]
+tts-studio-fake-worker = "tts_studio_fake_worker.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.uv.sources]
+tts-studio-protocol = { path = "../../packages/protocol", editable = true }
+tts-studio-worker-sdk = { path = "../../packages/worker-sdk", editable = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

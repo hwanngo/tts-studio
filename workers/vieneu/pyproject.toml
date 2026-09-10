@@ -1,0 +1,31 @@
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13"]
+build-backend = "uv_build"
+
+[project]
+name = "tts-studio-vieneu-worker"
+version = "0.1.0"
+description = "Standalone VieNeu engine worker for TTS Studio"
+requires-python = ">=3.14"
+dependencies = [
+    "tts-studio-protocol",
+    "tts-studio-worker-sdk",
+    "vieneu==3.6.3",
+    "soundfile==0.14.0",
+]
+
+[project.scripts]
+tts-studio-vieneu-worker = "tts_studio_vieneu_worker.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.uv.sources]
+tts-studio-protocol = { path = "../../packages/protocol", editable = true }
+tts-studio-worker-sdk = { path = "../../packages/worker-sdk", editable = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

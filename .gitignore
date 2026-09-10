@@ -1,0 +1,14 @@
+# Local TTS Studio runtime state
+.tts-studio/
+
+.venv/
+dist/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+web/node_modules/
+src/tts_studio/static/
+web/test-results/
+web/playwright-report/
+.mcp.json
+HANDOFF.md

@@ -1,0 +1,9 @@
+{
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "web:dev": "pnpm --dir web dev",
+    "web:build": "pnpm --dir web build",
+    "web:test": "pnpm --dir web test",
+    "web:check": "pnpm --dir web check"
+  }
+}
