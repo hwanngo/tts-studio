@@ -53,9 +53,9 @@ The canonical security and reliability backlog is maintained in
 now includes managed-directory and identity-bound file hardening, Worker readiness and orphan
 handling, bounded crash replacement, bounded direct inputs, provider egress enforcement, bounded
 cancellation with quarantine, migration continuity checks, protocol compatibility validation, and
-Core-over-real-gRPC alignment coverage. Remaining work is the stronger native-call termination
-operation and a native Generation retry operation; ordinary failed/cancelled Generations remain
-non-retryable, while startup-recovery failures remain retryable. This section intentionally does
+Core-over-real-gRPC alignment coverage, generation input limits, atomic terminal privacy redaction,
+and explicit idempotent Generation retry. Remaining work is the stronger native-call termination
+operation. This section intentionally does
 not duplicate the backlog.
 
 The release-smoke workflow runs frontend unit/type/build checks, locale parity, Ruff,

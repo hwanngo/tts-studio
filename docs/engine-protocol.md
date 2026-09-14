@@ -74,8 +74,9 @@ does not add a separate cue field or assume that every adapter interprets cue sy
   action terminates it.
 - Core-to-client backpressure limits buffered audio.
 - Once any audio is exposed to a client, a Worker failure cannot be retried transparently. Core
-  Generation terminal errors and cancellations are non-retryable because no native Generation
-  retry RPC exists; startup-recovery failures remain explicitly retryable after repair.
+  retries are explicit HTTP actions that create a new Job and Synthesize request; eligible retained
+  transient failures preserve the Worker's retryable fact after cleanup. No Worker retry RPC or
+  automatic stream replay is introduced. Cancelled and consumed-reference jobs are not retried.
 
 Core accepts only 48,000 Hz, mono, signed 16-bit little-endian PCM from the fake Worker. The
 Core validates header, sequence, byte alignment, and declared frame totals, then writes and
@@ -126,7 +127,7 @@ handshake and on later capability refreshes. CI generates stubs reproducibly and
 uncommitted generation drift. Every adapter runs a shared compliance suite covering handshake,
 auth, capabilities, model validation, progress ordering, lifecycle, voice reporting, synthesis,
 cancellation, deadline handling, and structured errors. SQLite startup refuses to apply an
-incomplete migration chain; migrations `002` through `012` must be present and contiguous before
+incomplete migration chain; migrations `002` through `013` must be present and contiguous before
 `user_version` advances.
 
 ## VieNeu profile

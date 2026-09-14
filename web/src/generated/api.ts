@@ -407,6 +407,9 @@ export type ApiPaths = {
   "/api/v1/generations/{job_id}/pcm": {
     get: { response: unknown };
   };
+  "/api/v1/generations/{job_id}/retry": {
+    post: { response: GenerationJobResponse };
+  };
   "/api/v1/history": {
     get: { response: Array<AudioArtifactResponse> };
   };

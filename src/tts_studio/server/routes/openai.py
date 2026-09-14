@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from tts_studio.generation.domain import AlignmentJob, AlignmentState, GenerationState
+from tts_studio.generation.limits import MAX_SYNTHESIS_TEXT_CHARS
 from tts_studio.generation.service import (
     GenerationArtifactInvalidError,
     GenerationArtifactNotFoundError,
@@ -24,7 +25,6 @@ from tts_studio.generation.service import (
     GenerationService,
     GenerationVoiceNotFoundError,
 )
-from tts_studio.providers.limits import MAX_SYNTHESIS_TEXT_CHARS
 from tts_studio.server.errors import ErrorEnvelope, PublicApiError
 from tts_studio.server.routes.generation import (
     AlignmentUnitResponse,
@@ -149,6 +149,7 @@ class OpenAiSpeechArtifactError(PublicApiError):
             }
         },
         422: {"model": ErrorEnvelope},
+        413: {"model": ErrorEnvelope},
         404: {"model": ErrorEnvelope},
         503: {"model": ErrorEnvelope},
     },

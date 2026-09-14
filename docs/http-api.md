@@ -19,6 +19,13 @@ The `/api/v1` namespace covers the implemented foundation and evolves through co
 
 `POST /api/v1/generations` supports asynchronous tracked work and interactive streaming. `GET /api/v1/events` uses SSE with event IDs so clients can resume after reconnecting. Audio is delivered as a binary stream or managed file.
 
+Native generation text and OpenAI-compatible `input` are limited to 10,000 characters,
+enforced before job persistence and at the shared Core service boundary. Both generation creation
+routes reject JSON bodies larger than 128 KiB with `413 request_body_too_large`, including chunked
+requests, before JSON parsing. This byte budget accommodates 10,000 JSON-escaped Unicode characters.
+For jobs with retention disabled, terminal responses preserve the `text` field as an empty string;
+the terminal state and text redaction are committed in the same SQLite transaction.
+
 Alignment is an opt-in post-synthesis operation for completed generations that retained a WAV
 Audio Artifact. `POST /api/v1/generations/{job_id}/alignment` queues one alignment Job and is
 idempotent; `GET /api/v1/generations/{job_id}/alignment` returns `queued`, `running`, `completed`,
@@ -72,9 +79,21 @@ use explicit confirmation-bearing `POST` routes and return an operation result; 
 lifecycle operations return `service_unsupported`.
 `PATCH /api/v1/models/{model_id}/replicas` changes the desired Worker replica count from 1 to 8.
 `GET /api/v1/generations/{job_id}/pcm` streams transient validated mono S16LE PCM with explicit
-sample-rate, channel-count, and encoding headers; PCM is never durable. Generation Jobs currently
-have no native retry operation, so failed and cancelled job records are never marked retryable;
-clients must create a new job explicitly, and consumed Reference Recordings are not reusable.
+sample-rate, channel-count, and encoding headers; PCM is never durable.
+
+`POST /api/v1/generations/{job_id}/retry` returns `202` with a new Generation Job for a retained,
+failed attempt whose error is retryable and whose preset or Saved Voice source is still usable.
+The new attempt preserves text, model, voice, retention, and synthesis options, and revalidates
+current model, voice, and Worker capabilities. Repeated or concurrent calls for the same original
+job return its one durable successor, including after Core restart. The original job stays failed;
+to retry a failed successor, call the endpoint with that successor's ID. Retry never happens
+automatically, including when an earlier attempt already streamed partial audio.
+
+Unknown jobs return `404`; non-retryable failures, completed, cancelled, and active jobs return
+`409 generation_not_retryable`. Jobs with redacted text, a one-off Reference Recording, an owned
+Audio Artifact, or incomplete cleanup also return `409`. Consumed references cannot be reused;
+submit a new generation with a new upload. A startup cleanup error's retryable flag refers to
+recovery cleanup after repair and restart, not permission to bypass cleanup through this endpoint.
 
 `POST /api/v1/voices/preview` accepts `{ "model_id": "...", "voice_id": "...", "text": "..." }`
 and returns a directly playable validated WAV (`audio/wav`). Preview text is non-empty, NUL-free,
@@ -89,8 +108,8 @@ values in the ranges speed `0.25..4.0`, pitch `-1.0..1.0`, and volume `0.0..2.0`
 requested option against the selected Worker's runtime capability facts before queueing and again
 after model load. An explicitly requested unsupported option fails with retryable
 `capability_unsupported` when request admission fails before a Generation Job is created; if a
-queued job later fails capability checks, its stored terminal error is non-retryable because no
-Generation retry operation exists. Inline cues remain part of the
+queued job later fails capability checks, its stored terminal error remains non-retryable;
+create a new request after choosing supported options. Inline cues remain part of the
 text payload rather than a separate request field: clients may display guidance only when the
 Worker advertises the runtime `inline_cues` capability, and must not assume cue support.
 

@@ -18,6 +18,8 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException
 
+from tts_studio.generation.limits import MAX_GENERATION_BODY_BYTES
+
 _CORRELATION_HEADER = "X-Correlation-ID"
 _LOGGER = logging.getLogger(__name__)
 
@@ -228,6 +230,23 @@ def install_error_handlers(
                     retryable=False,
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+        if request.method == "POST" and request.url.path.rstrip("/") in {
+            "/api/v1/generations", "/v1/audio/speech",
+        }:
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > MAX_GENERATION_BODY_BYTES:
+                    return _error_response(
+                        request,
+                        status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                        code="request_body_too_large",
+                        message="Generation request body exceeds 128 KiB.",
+                        source="http",
+                        retryable=False,
+                    )
+                body.extend(chunk)
+            # Starlette's cached Request passes these bounded bytes to the router.
+            request._body = bytes(body)
         response = await call_next(request)
         response.headers[_CORRELATION_HEADER] = correlation_id
         return response

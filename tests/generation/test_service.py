@@ -525,7 +525,7 @@ async def test_post_refresh_option_capability_failure_is_stable(tmp_path: Path, 
 
 
 @pytest.mark.asyncio
-async def test_failed_generation_is_not_marked_retryable_without_native_retry_operation(tmp_path: Path) -> None:
+async def test_retained_transient_worker_failure_is_explicitly_retryable(tmp_path: Path) -> None:
     events = [
         engine_pb2.SynthesisEvent(
             error=engine_pb2.WorkerError(
@@ -542,9 +542,150 @@ async def test_failed_generation_is_not_marked_retryable_without_native_retry_op
     assert failed.error == {
         "code": "provider_unavailable",
         "message": "The engine Worker failed during synthesis.",
-        "retryable": False,
+        "retryable": True,
     }
     await service.close()
+
+
+@pytest.mark.asyncio
+async def test_generation_rejects_oversized_text_before_persistence(tmp_path: Path) -> None:
+    service, registry, _layout, _events_value = _service(tmp_path, _Lease(_events()))
+    try:
+        with pytest.raises(GenerationRequestError, match="10,000"):
+            await service.create(model_id="model-one", voice_id="fake-neutral", text="a" * 10_001)
+        assert registry.list_jobs() == ()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_generation_accepts_ten_thousand_unicode_characters(tmp_path: Path) -> None:
+    lease = _Lease(_events())
+    service, _registry_value, _layout, _events_value = _service(tmp_path, lease)
+    try:
+        job = await service.create(model_id="model-one", voice_id="fake-neutral", text="😀" * 10_000)
+        assert (await service.wait(job.id)).state is GenerationState.COMPLETED
+        assert lease.requests[0].text == "😀" * 10_000
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retain", [False, True])
+@pytest.mark.parametrize("terminal", ["completed", "failed", "cancelled"])
+async def test_terminal_generation_text_retention(tmp_path: Path, retain: bool, terminal: str) -> None:
+    events = _events() if terminal != "failed" else [engine_pb2.SynthesisEvent(error=engine_pb2.WorkerError(code="unavailable", retryable=True))]
+    service, registry, layout, _events_value = _service(tmp_path, _Lease(events))
+    try:
+        job = await service.create(model_id="model-one", voice_id="fake-neutral", text="private transcript", retain_artifact=retain)
+        if terminal == "cancelled":
+            await service.cancel(job.id)
+        result = await service.wait(job.id)
+        assert result.state.value == terminal
+        assert result.text == ("private transcript" if retain else "")
+        if terminal == "failed":
+            assert result.error is not None
+            assert result.error["retryable"] is retain
+        with Database(layout.database_path).read() as connection:
+            assert connection.execute("SELECT text FROM generation_jobs WHERE id = ?", (job.id,)).fetchone()[0] == result.text
+        assert len(registry.list_history()) == int(retain and terminal == "completed")
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_retry_creates_one_successor_and_survives_service_restart(tmp_path: Path) -> None:
+    lease = _Lease([engine_pb2.SynthesisEvent(error=engine_pb2.WorkerError(code="unavailable", retryable=True))])
+    service, registry, layout, events = _service(tmp_path, lease)
+    original = await service.create(model_id="model-one", voice_id="fake-neutral", text="retry me")
+    await service.wait(original.id)
+    lease.events = _events()
+    try:
+        retries = await asyncio.gather(*(service.retry(original.id) for _ in range(3)))
+        assert len({job.id for job in retries}) == 1
+        assert retries[0].id != original.id
+        completed = await service.wait(retries[0].id)
+        assert completed.state is GenerationState.COMPLETED
+        assert registry.get_job(original.id).state is GenerationState.FAILED
+        assert len(registry.list_jobs()) == 2
+        assert [artifact.job_id for artifact in registry.list_history()] == [completed.id]
+    finally:
+        await service.close()
+    restarted = GenerationService(registry, _Models(_model()), _Pool(lease), layout=layout, event_store=events)
+    try:
+        assert (await restarted.retry(original.id)).id == completed.id
+        assert len(registry.list_history()) == 1
+    finally:
+        await restarted.close()
+
+
+@pytest.mark.asyncio
+async def test_retry_preserves_options_and_revalidates_runtime_capabilities(tmp_path: Path) -> None:
+    lease = _Lease(_events())
+    service, registry, _layout, _events_value = _service(tmp_path, lease)
+    original = registry.create_job(
+        model_id="model-one", engine_id="fake", voice_id="fake-neutral", text="keep options",
+        options=SynthesisOptions(speed=1.25, pitch=-0.5, volume=0.75), correlation_id="original",
+    )
+    registry.mark_recovery_failure(original.id, {"code": "recovery_required", "retryable": True})
+    try:
+        with pytest.raises(GenerationCapabilityError):
+            await service.retry(original.id)
+        assert len(registry.list_jobs()) == 1
+        lease.capabilities = WorkerCapabilities(
+            engine_id="fake", engine_version="0.2.0", max_concurrency=1,
+            supported=frozenset({"preset_voices", "streaming_synthesis", "speed", "pitch", "volume"}),
+        )
+        retry = await service.retry(original.id, correlation_id="new-correlation")
+        completed = await service.wait(retry.id)
+        assert completed.state is GenerationState.COMPLETED
+        assert completed.options == SynthesisOptions(speed=1.25, pitch=-0.5, volume=0.75)
+        assert completed.correlation_id == "new-correlation"
+        assert lease.requests[0].options == engine_pb2.SynthesisOptions(speed=1.25, pitch=-0.5, volume=0.75)
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_queued_retry_recovers_after_crash_before_scheduling(tmp_path: Path) -> None:
+    service, registry, _layout, _events_value = _service(tmp_path, _Lease(_events()))
+    original = registry.create_job(model_id="model-one", engine_id="fake", voice_id="fake-neutral", text="recover retry", correlation_id="original")
+    registry.mark_recovery_failure(original.id, {"code": "recovery_required", "retryable": True})
+    retry = registry.create_job(model_id="model-one", engine_id="fake", voice_id="fake-neutral", text=original.text, correlation_id="retry", retry_of=original.id)
+    try:
+        await service.recover()
+        assert (await service.retry(original.id)).id == retry.id
+        assert (await service.wait(retry.id)).state is GenerationState.COMPLETED
+        assert len(registry.list_history()) == 1
+        assert len(registry.list_jobs()) == 2
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["completed", "cancelled", "queued", "permanent", "private", "reference", "cleanup", "artifact", "unlinked_artifact"])
+async def test_retry_refuses_unsafe_or_unsupported_jobs(tmp_path: Path, kind: str) -> None:
+    service, registry, layout, _events_value = _service(tmp_path, _Lease(_events()))
+    job = registry.create_job(model_id="model-one", engine_id="fake", voice_id=None if kind == "reference" else "fake-neutral", reference_id="consumed" if kind == "reference" else None, text="retry safety", retain_artifact=kind != "private", correlation_id="test")
+    if kind == "reference":
+        registry.clear_reference_id(job.id)
+    if kind in {"completed", "artifact", "unlinked_artifact"}:
+        for state in (GenerationState.LOADING, GenerationState.GENERATING, GenerationState.FINALIZING):
+            registry.transition_job(job.id, state)
+        registry.create_artifact(job_id=job.id, path="audio/existing.wav", byte_size=44, sha256="a" * 64, sample_rate=48000, channel_count=1, frame_count=0)
+    if kind == "unlinked_artifact":
+        with Database(layout.database_path).transaction() as connection:
+            connection.execute("UPDATE generation_jobs SET artifact_id = NULL WHERE id = ?", (job.id,))
+    if kind != "queued":
+        state = GenerationState.COMPLETED if kind == "completed" else GenerationState.CANCELLED if kind == "cancelled" else GenerationState.FAILED
+        registry.transition_job(job.id, state, error={"code": "cleanup_failed" if kind == "cleanup" else "unavailable", "retryable": kind != "permanent"})
+    try:
+        with pytest.raises(GenerationRequestError):
+            await service.retry(job.id)
+        assert len(registry.list_jobs()) == 1
+        assert len(registry.list_history()) == int(kind in {"completed", "artifact", "unlinked_artifact"})
+    finally:
+        await service.close()
 
 
 @pytest.mark.asyncio

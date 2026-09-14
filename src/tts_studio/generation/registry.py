@@ -84,6 +84,7 @@ class GenerationRegistry:
         options: SynthesisOptions | None = None,
         correlation_id: str,
         job_id: str | None = None,
+        retry_of: str | None = None,
     ) -> GenerationJob:
         durable_id = _required_text(job_id or str(uuid4()), "job_id")
         _validate_source(voice_id, reference_id, saved_voice_id)
@@ -93,12 +94,20 @@ class GenerationRegistry:
             raise InvalidRegistryDataError("retain_artifact must be a boolean")
         now = _utc_now()
         with self._database.transaction() as connection:
+            if retry_of is not None:
+                existing = connection.execute("SELECT * FROM generation_jobs WHERE retry_of = ?", (retry_of,)).fetchone()
+                if existing is not None:
+                    return _job(existing)
+                original = _job_or_missing(connection.execute("SELECT * FROM generation_jobs WHERE id = ?", (retry_of,)).fetchone(), retry_of)
+                artifact = connection.execute("SELECT id FROM audio_artifacts WHERE job_id = ?", (retry_of,)).fetchone()
+                if not original.can_retry or artifact is not None:
+                    raise InvalidGenerationTransitionError("Generation Job cannot be retried")
             connection.execute(
                 """INSERT INTO generation_jobs (
                     id, model_id, engine_id, voice_id, reference_id, saved_voice_id, provider_id, text, retain_artifact,
                     speed, pitch, volume, state, bytes_written, frame_count, sample_rate, channel_count, artifact_id,
-                    correlation_id, cancellation_requested, error_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, 0, NULL, NULL, NULL, ?, 0, NULL, ?, ?)""",
+                    correlation_id, cancellation_requested, error_json, created_at, updated_at, retry_of
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, 0, NULL, NULL, NULL, ?, 0, NULL, ?, ?, ?)""",
                 (
                     durable_id,
                     _required_text(model_id, "model_id"),
@@ -115,10 +124,16 @@ class GenerationRegistry:
                     _required_text(correlation_id, "correlation_id"),
                     now,
                     now,
+                    retry_of,
                 ),
             )
             row = _required_row(connection.execute("SELECT * FROM generation_jobs WHERE id = ?", (durable_id,)))
         return _job(row)
+
+    def get_retry(self, job_id: str) -> GenerationJob | None:
+        with self._database.read() as connection:
+            row = connection.execute("SELECT * FROM generation_jobs WHERE retry_of = ?", (job_id,)).fetchone()
+        return _job(row) if row is not None else None
 
     def get_job(self, job_id: str) -> GenerationJob:
         with self._database.read() as connection:
@@ -190,8 +205,10 @@ class GenerationRegistry:
             connection.execute(
                 """UPDATE generation_jobs SET state = ?, bytes_written = ?, frame_count = ?,
                    sample_rate = COALESCE(?, sample_rate), channel_count = COALESCE(?, channel_count),
-                   error_json = ?, updated_at = ? WHERE id = ?""",
-                (state.value, next_bytes, next_frames, sample_rate, channel_count, error_json, _utc_now(), job_id),
+                   error_json = ?, updated_at = ?, text = CASE
+                       WHEN retain_artifact = 0 AND ? IN ('completed', 'cancelled', 'failed') THEN ''
+                       ELSE text END WHERE id = ?""",
+                (state.value, next_bytes, next_frames, sample_rate, channel_count, error_json, _utc_now(), state.value, job_id),
             )
             return _job(_required_row(connection.execute("SELECT * FROM generation_jobs WHERE id = ?", (job_id,))))
 

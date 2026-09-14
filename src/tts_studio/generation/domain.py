@@ -102,6 +102,20 @@ class GenerationJob:
     def frames(self) -> int:
         return self.frame_count
 
+    @property
+    def can_retry(self) -> bool:
+        return (
+            self.state is GenerationState.FAILED
+            and self.error is not None
+            and self.error.get("retryable") is True
+            and self.error.get("code") not in {"cleanup_failed", "reference_recovery_required"}
+            and self.retain_artifact
+            and bool(self.text)
+            and self.artifact_id is None
+            and self.reference_id is None
+            and (self.voice_id is not None or self.saved_voice_id is not None)
+        )
+
 
 @dataclass(frozen=True)
 class AudioArtifact:

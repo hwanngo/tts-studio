@@ -488,6 +488,11 @@ def test_built_artifacts_complete_phase3_generation_workflow(tmp_path: Path) -> 
         nonretained = _wait_for_terminal_generation(base_url, nonretained_queued["id"])
         assert nonretained["state"] == "completed"
         assert nonretained["artifact_id"] is None
+        assert nonretained["text"] == ""
+        with sqlite3.connect(database_path) as connection:
+            assert connection.execute(
+                "SELECT text FROM generation_jobs WHERE id = ?", (nonretained["id"],)
+            ).fetchone()[0] == ""
         history_status, history = _json_request(f"{base_url}/api/v1/history")
         assert history_status == 200
         assert all(item["job_id"] != nonretained["id"] for item in history)
@@ -500,7 +505,7 @@ def test_built_artifacts_complete_phase3_generation_workflow(tmp_path: Path) -> 
             payload={
                 "model_id": model_id,
                 "voice_id": "fake-neutral",
-                "text": "cancel me " * 4000,
+                "text": "cancel me " * 1000,
             },
         )
         assert status == 202
@@ -525,7 +530,7 @@ def test_built_artifacts_complete_phase3_generation_workflow(tmp_path: Path) -> 
             payload={
                 "model_id": model_id,
                 "voice_id": "fake-neutral",
-                "text": "recover me " * 4000,
+                "text": "recover me " * 900,
             },
         )
         assert status == 202
@@ -543,5 +548,21 @@ def test_built_artifacts_complete_phase3_generation_workflow(tmp_path: Path) -> 
         assert recovered["state"] == "failed"
         assert recovered["error"]["code"] == "recovery_required"
         _assert_no_generation_partials(data_dir)
+
+        retry_url = f"{base_url}/api/v1/generations/{recovered['id']}/retry"
+        retry_status, retry = _json_request(retry_url, method="POST")
+        assert retry_status == 202
+        assert retry["id"] != recovered["id"]
+        retried = _wait_for_terminal_generation(base_url, retry["id"])
+        assert retried["state"] == "completed"
+        assert _json_request(retry_url, method="POST")[1]["id"] == retry["id"]
+        with sqlite3.connect(database_path) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM generation_jobs WHERE retry_of = ?", (recovered["id"],)
+            ).fetchone()[0] == 1
+            assert connection.execute(
+                "SELECT COUNT(*) FROM audio_artifacts WHERE job_id IN (?, ?)",
+                (recovered["id"], retry["id"]),
+            ).fetchone()[0] == 1
     finally:
         _stop_server(server)

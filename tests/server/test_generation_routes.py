@@ -49,6 +49,55 @@ async def _model_id(client: AsyncClient, app: Any) -> str:
     return "fixtures/compatible"
 
 
+@pytest.mark.asyncio
+async def test_generation_text_limit_before_persistence(core) -> None:
+    app, client = core
+    response = await client.post("/api/v1/generations", json={"model_id": "fixtures/compatible", "voice_id": "fake-neutral", "text": "x" * 10_001})
+    assert response.status_code == 422
+    assert app.state.generation_registry.list_jobs() == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/v1/generations", "/v1/audio/speech"])
+@pytest.mark.parametrize("chunked", [False, True])
+async def test_generation_body_limit_before_json_parsing(core, path: str, chunked: bool) -> None:
+    app, client = core
+    async def chunks():
+        for _ in range(33):
+            yield b" " * 4096
+    response = await client.post(path, content=chunks() if chunked else b" " * (128 * 1024 + 1), headers={"content-type": "application/json"})
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "request_body_too_large"
+    assert app.state.generation_registry.list_jobs() == ()
+
+
+@pytest.mark.asyncio
+async def test_generation_retry_route_is_idempotent(core) -> None:
+    app, client = core
+    registry = app.state.generation_registry
+    original = registry.create_job(model_id="fixtures/compatible", engine_id="fake", voice_id="fake-neutral", text="recovered request", correlation_id="original")
+    registry.mark_recovery_failure(original.id, {"code": "recovery_required", "retryable": True})
+    response = await client.post(f"/api/v1/generations/{original.id}/retry")
+    assert response.status_code == 202
+    successor = response.json()["id"]
+    assert successor != original.id
+    completed = await app.state.generation_service.wait(successor)
+    assert completed.state is GenerationState.COMPLETED
+    assert (await client.post(f"/api/v1/generations/{original.id}/retry")).json()["id"] == successor
+    assert (await client.post(f"/api/v1/generations/{successor}/retry")).status_code == 409
+    assert (await client.post("/api/v1/generations/missing/retry")).status_code == 404
+    assert len(registry.list_history()) == 1
+
+
+@pytest.mark.asyncio
+async def test_nonretained_generation_api_redacts_terminal_text(core) -> None:
+    app, client = core
+    completed = await _completed_generation(client, app, retain_artifact=False)
+    response = await client.get(f"/api/v1/generations/{completed['id']}")
+    assert response.json()["text"] == ""
+    assert (await client.get("/api/v1/generations")).json()[0]["text"] == ""
+
+
 def _activate_model(registry: ModelRegistry) -> None:
     registry.upsert_engine_installation(
         engine_installation_id="fake@0.2.0",
@@ -997,7 +1046,7 @@ async def test_generation_routes_use_safe_errors_and_cancel_jobs(core: Any) -> N
         json={
             "model_id": model_id,
             "voice_id": "fake-neutral",
-            "text": "long " * 4000,
+            "text": "long " * 2000,
         },
     )
     job_id = created.json()["id"]

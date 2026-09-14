@@ -189,7 +189,7 @@ async def test_real_authenticated_fake_reference_generation_finalizes_wav_and_cl
         cancelled = await service.create(
             model_id="fixtures/compatible",
             reference_id=cancelled_recording.id,
-            text="cancel " * 4000,
+            text="cancel " * 1000,
         )
         await asyncio.sleep(0.01)
         await service.cancel(cancelled.id)
@@ -250,7 +250,7 @@ async def test_real_worker_cancellation_leaves_no_partial_audio_and_serializes_r
     first = await service.create(
         model_id="fixtures/compatible",
         voice_id="fake-neutral",
-        text="long " * 4000,
+        text="long " * 2000,
     )
     await asyncio.sleep(0.01)
     second_task = asyncio.create_task(

@@ -22,6 +22,7 @@ from tts_studio.generation.domain import (
     GenerationJob,
     SynthesisOptions,
 )
+from tts_studio.generation.limits import MAX_SYNTHESIS_TEXT_CHARS
 from tts_studio.generation.service import (
     GenerationArtifactDeletionError,
     GenerationArtifactInvalidError,
@@ -31,6 +32,7 @@ from tts_studio.generation.service import (
     GenerationModelNotFoundError,
     GenerationReferenceNotFoundError,
     GenerationRequestError,
+    GenerationRetryError,
     GenerationService,
     GenerationVoiceNotFoundError,
 )
@@ -145,7 +147,7 @@ class GenerationRequest(BaseModel):
     voice_id: str | None = None
     reference_id: str | None = None
     saved_voice_id: str | None = None
-    text: str
+    text: str = Field(max_length=MAX_SYNTHESIS_TEXT_CHARS)
     retain_artifact: bool | None = None
     speed: float | None = Field(
         default=None,
@@ -445,6 +447,7 @@ _GENERATION_ERRORS: dict[int | str, dict[str, Any]] = {
     int(HTTPStatus.NOT_FOUND): {"model": ErrorEnvelope},
     int(HTTPStatus.UNPROCESSABLE_ENTITY): {"model": ErrorEnvelope},
     int(HTTPStatus.SERVICE_UNAVAILABLE): {"model": ErrorEnvelope},
+    int(HTTPStatus.REQUEST_ENTITY_TOO_LARGE): {"model": ErrorEnvelope},
 }
 _ARTIFACT_DELETE_ERRORS: dict[int | str, dict[str, Any]] = {
     int(HTTPStatus.NOT_FOUND): {"model": ErrorEnvelope},
@@ -592,6 +595,35 @@ async def cancel_generation(job_id: str, request: Request) -> GenerationJobRespo
         return _job_response(await service.cancel(job_id))
     except GenerationJobNotFoundError as error:
         raise GenerationNotFoundApiError from error
+
+
+@router.post(
+    "/generations/{job_id}/retry",
+    response_model=GenerationJobResponse,
+    status_code=HTTPStatus.ACCEPTED,
+    responses={**_GENERATION_ERRORS, int(HTTPStatus.CONFLICT): {"model": ErrorEnvelope}},
+)
+async def retry_generation(job_id: str, request: Request) -> GenerationJobResponse:
+    service: GenerationService = request.app.state.generation_service
+    try:
+        job = await service.retry(job_id, correlation_id=request.state.correlation_id)
+    except GenerationJobNotFoundError as error:
+        raise GenerationNotFoundApiError from error
+    except GenerationRetryError as error:
+        raise PublicApiError(status_code=HTTPStatus.CONFLICT, code="generation_not_retryable", message=str(error), source="generation") from error
+    except GenerationModelNotFoundError as error:
+        raise GenerationModelNotFoundApiError from error
+    except GenerationVoiceNotFoundError as error:
+        raise VoiceNotFoundApiError from error
+    except GenerationReferenceNotFoundError as error:
+        raise GenerationReferenceNotFoundApiError from error
+    except GenerationRequestError as error:
+        raise GenerationRequestInvalidApiError(str(error)) from error
+    except GenerationCapabilityError as error:
+        raise GenerationCapabilityUnsupportedApiError from error
+    except WorkerOperationError as error:
+        raise GenerationWorkerUnavailableApiError from error
+    return _job_response(job)
 
 
 @router.post(

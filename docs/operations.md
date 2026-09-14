@@ -142,12 +142,14 @@ The remaining security and reliability backlog is intentionally maintained here 
 backlog. Completed remediation includes owner-only managed-directory and identity-bound file
 operations, readiness-file hardening, crash/orphan supervision with bounded replacement, bounded
 direct Worker/reference inputs, migration-gap detection, protocol compatibility checks, provider
-egress policy, and cancellation quarantine. Remaining work is limited to a stronger operation that
-can forcibly terminate a native SDK call and a native Generation retry operation. The implemented
+egress policy, cancellation quarantine, bounded generation requests, terminal text redaction,
+and explicit idempotent Generation retry. Remaining work is limited to a stronger operation that
+can forcibly terminate a native SDK call. The implemented
 cancellation contract waits a bounded interval, quarantines a Worker/runtime that ignores
-cancellation, and fails unload/reuse closed; it does not pretend the native call stopped. Until a
-native Generation retry operation exists, ordinary failed and cancelled Generation Jobs are
-non-retryable, while startup-recovery failures remain retryable. Other documents link here instead
+cancellation, and fails unload/reuse closed; it does not pretend the native call stopped.
+Retained transient failures with reusable voice sources support an explicit new attempt; cancelled,
+non-retained, consumed-reference, and cleanup-failed attempts cannot be regenerated through retry.
+Startup cleanup failures still require repair and Core restart. Other documents link here instead
 of maintaining a second backlog.
 
 ## Settings and service administration
@@ -172,6 +174,18 @@ silently changing state.
 
 Generation text and final WAV are retained locally by default. A request can opt out. One-off cloning references are temporary and deleted after generation. Saved cloned Voices retain only the managed reference or prepared data required by their Adapter and record consent acknowledgment.
 
+Core bounds generation text at 10,000 characters and native/OpenAI generation JSON bodies at
+128 KiB. When retention is disabled, queued and active jobs keep text for durable execution, then
+atomically replace it with an empty string when completed, failed, or cancelled. Migration 013
+also redacts non-retained jobs that were already terminal. Retained jobs keep their text. This is
+logical SQLite redaction, not a guarantee of forensic erasure from old backups or storage media.
+
+The explicit Generation retry endpoint creates one successor per eligible failed attempt and
+persists that relationship with a unique SQLite index. Retried jobs receive new IDs and own their
+own artifacts; original attempts and their errors remain inspectable. A crash between persisting
+the queued successor and scheduling it is handled by ordinary queued-job startup recovery.
+Requests for a job with an existing successor return that successor without synthesizing again.
+
 Voice previews are a separate temporary path. Core validates the short request, synthesizes a WAV,
 and returns it directly without creating a Generation Job, Audio Artifact, or History row. The
 selected model is unloaded after the preview, and preview bytes are not copied into managed `audio/`
@@ -184,7 +198,7 @@ Worker and removes the private temporary file before the job becomes terminal. M
 refused while any non-terminal Generation Job pins that Model Installation.
 
 If active-generation cleanup fails, the job reports a non-retryable `cleanup_failed` error instead
-of successful cancellation because no native Generation retry operation exists. If startup recovery
+of successful cancellation. The generation retry endpoint refuses this state. If startup recovery
 finds cleanup still incomplete, it records a retryable recovery failure; correct the filesystem
 problem and restart Core to retry recovery cleanup.
 

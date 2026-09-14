@@ -39,6 +39,7 @@ from tts_studio.generation.domain import (
     GenerationState,
     SynthesisOptions,
 )
+from tts_studio.generation.limits import MAX_SYNTHESIS_TEXT_CHARS
 from tts_studio.generation.registry import (
     GenerationRecordNotFoundError,
     GenerationRegistry,
@@ -100,6 +101,10 @@ class GenerationArtifactDeletionError(RuntimeError):
 
 class GenerationRequestError(ValueError):
     """Raised when a generation request is not safe to queue."""
+
+
+class GenerationRetryError(GenerationRequestError):
+    """Raised when the original attempt cannot safely have a successor."""
 
 
 class GenerationReferenceNotFoundError(LookupError):
@@ -200,6 +205,7 @@ class GenerationService:
         self._scheduler = GenerationScheduler(self._run_job)
         self._alignment_scheduler = GenerationScheduler(self._run_alignment)
         self._replica_gate = asyncio.Lock()
+        self._retry_gate = asyncio.Lock()
         self._streams: dict[str, AsyncIterator[engine_pb2.SynthesisEvent]] = {}
         self._pcm_subscribers: dict[str, set[asyncio.Queue[bytes | None]]] = {}
         self._pcm_terminated: dict[str, set[asyncio.Queue[bytes | None]]] = {}
@@ -230,6 +236,7 @@ class GenerationService:
         retain_artifact: bool | None = None,
         correlation_id: str | None = None,
         options: SynthesisOptions | None = None,
+        _retry_of: str | None = None,
     ) -> GenerationJob:
         retain_artifact = self.resolve_retention(retain_artifact)
         _validate_text(text)
@@ -312,6 +319,7 @@ class GenerationService:
                 retain_artifact=retain_artifact,
                 options=options,
                 correlation_id=correlation_id or str(uuid4()),
+                retry_of=_retry_of,
             )
         except BaseException:
             if reference_handle is not None:
@@ -332,6 +340,34 @@ class GenerationService:
                 self._fail_job(cleared, "scheduler_failed", "Generation could not be scheduled.", False)
             raise
         return job
+
+    async def retry(self, job_id: str, *, correlation_id: str | None = None) -> GenerationJob:
+        """Explicitly create at most one new attempt, preserving the original job."""
+        async with self._retry_gate:
+            original = self.get(job_id)
+            existing = self._registry.get_retry(job_id)
+            if existing is not None:
+                return existing
+            if not original.can_retry:
+                raise GenerationRetryError("Generation Job cannot be retried; create a new request.")
+            # A terminal row can become visible just before its task finishes cleanup.
+            await self._scheduler.wait(job_id)
+            original = self.get(job_id)
+            if not original.can_retry:
+                raise GenerationRetryError("Generation Job cannot be retried; create a new request.")
+            try:
+                return await self.create(
+                    model_id=original.model_id,
+                    voice_id=original.voice_id,
+                    saved_voice_id=original.saved_voice_id,
+                    text=original.text,
+                    retain_artifact=original.retain_artifact,
+                    options=original.options,
+                    correlation_id=correlation_id,
+                    _retry_of=original.id,
+                )
+            except InvalidGenerationTransitionError as error:
+                raise GenerationRetryError("Generation Job cannot be retried; create a new request.") from error
 
     def get(self, job_id: str) -> GenerationJob:
         try:
@@ -1263,14 +1299,14 @@ class GenerationService:
                 else:
                     failure = ("generation_failed", "Generation state could not advance.", False)
             except _GenerationFailure as error:
-                failure = (error.code, error.message, False)
+                failure = (error.code, error.message, error.retryable)
             except GenerationCapabilityError as error:
                 failure = ("capability_unsupported", str(error), False)
             except WorkerOperationError as error:
                 failure = (
                     error.code or "worker_failed",
                     "The engine Worker failed during generation.",
-                    False,
+                    error.retryable,
                 )
             except Exception:  # noqa: BLE001 - durable job boundary normalizes Worker/filesystem faults
                 current = self.get(job_id)
@@ -1402,7 +1438,7 @@ class GenerationService:
                     raise _GenerationFailure(
                         event.error.code or "worker_failed",
                         "The engine Worker failed during synthesis.",
-                        retryable=False,
+                        retryable=event.error.retryable,
                     )
                 else:
                     raise _GenerationFailure("malformed_pcm", "The Worker sent an unknown synthesis event.")
@@ -1479,6 +1515,12 @@ class GenerationService:
     def _fail_job(self, job: GenerationJob, code: str, message: str, retryable: bool) -> None:
         if job.state in {GenerationState.COMPLETED, GenerationState.CANCELLED, GenerationState.FAILED}:
             return
+        retryable = retryable if self._closing else (
+            retryable and job.retain_artifact and job.artifact_id is None
+            and job.reference_id is None
+            and (job.voice_id is not None or job.saved_voice_id is not None)
+            and code not in {"cleanup_failed", "reference_recovery_required"}
+        )
         failed = self._registry.transition_job(
             job.id,
             GenerationState.FAILED,
@@ -1826,6 +1868,8 @@ def _alignment_error(code: str, retryable: bool) -> dict[str, Any]:
 
 
 def _validate_text(text: str) -> None:
+    if isinstance(text, str) and len(text) > MAX_SYNTHESIS_TEXT_CHARS:
+        raise GenerationRequestError("text must not exceed 10,000 characters")
     if not isinstance(text, str) or not text.strip() or "\0" in text:
         raise GenerationRequestError("text must be non-empty and must not contain NUL characters")
 
