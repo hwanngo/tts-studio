@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -22,6 +23,7 @@ ALIGNMENT_DEADLINE_SECONDS = 30.0
 _MAX_ALIGNMENT_RESULT_BYTES = 1 << 20
 _MAX_ALIGNMENT_UNITS = 10_000
 SYNTHESIS_DEADLINE_SECONDS = 300.0
+CANCELLATION_GRACE_SECONDS = 0.5
 
 
 @dataclass(frozen=True)
@@ -97,12 +99,14 @@ class _CancellableSynthesisCall(Protocol):
 class GrpcWorkerLease:
     """Hide generated gRPC stubs and authentication behind WorkerLease."""
 
-    def __init__(self, worker: WorkerProcess) -> None:
+    def __init__(self, worker: WorkerProcess, *, hard_stop: Callable[[], Awaitable[None]] | None = None) -> None:
         self._worker = worker
         self.capabilities = worker.capabilities
         self._model_id: str | None = getattr(worker, "loaded_model_id", None)
         self._synthesis_active = False
         self._synthesis_stream: _LeaseSynthesisStream | None = None
+        self._hard_stop = hard_stop
+        self._unloaded_model_id: str | None = None
 
     async def load_model(self, model: ModelInstallation) -> None:
         self._ensure_model_identity(model.id)
@@ -161,6 +165,14 @@ class GrpcWorkerLease:
             self._worker.capabilities = capabilities
 
     async def unload_model(self, model: ModelInstallation) -> None:
+        if getattr(self._worker, "terminated", False):
+            if self._model_id is not None and self._model_id != model.id:
+                raise WorkerModelMismatchError("operation names a different model than the active lease")
+            self._model_id = self._worker.loaded_model_id = None
+            self._unloaded_model_id = model.id
+            return
+        if self._model_id is None and self._unloaded_model_id == model.id:
+            return
         self._ensure_loaded_model(model.id)
         response = await self._worker.stub.UnloadModel(
             engine_pb2.UnloadModelRequest(model_id=model.id),
@@ -174,9 +186,15 @@ class GrpcWorkerLease:
                 if error.code == "model_not_loaded":
                     self._model_id = None
                     self._worker.loaded_model_id = None
-                raise
+                    raise
+                if self._hard_stop is None or error.code not in {"model_unload_failed", "synthesis_busy"}:
+                    raise
+                # A retained transient attempt remains retryable when process
+                # containment proves cleanup, even if the native runtime cannot.
+                await self._hard_stop()
         self._model_id = None
         self._worker.loaded_model_id = None
+        self._unloaded_model_id = model.id
 
     async def list_voices(self) -> tuple[engine_pb2.PresetVoice, ...]:
         response = await self._worker.stub.ListVoices(
@@ -273,6 +291,8 @@ class GrpcWorkerLease:
             raise
 
     def _ensure_model_identity(self, model_id: str) -> None:
+        if getattr(self._worker, "quarantined", False):
+            raise RuntimeError("Worker is quarantined")
         if self._model_id is not None and model_id != self._model_id:
             raise WorkerModelMismatchError(
                 "operation names a different model than the active lease"
@@ -295,6 +315,28 @@ class GrpcWorkerLease:
         if stream is not None:
             await stream.aclose()
 
+    async def _cancel_synthesis(self) -> None:
+        """Confirm native quiescence; gRPC cancellation alone is not that proof."""
+        model_id = self._model_id
+        if model_id is None:
+            return
+        try:
+            async with asyncio.timeout(CANCELLATION_GRACE_SECONDS):
+                while True:
+                    response = await self._worker.stub.UnloadModel(
+                        engine_pb2.UnloadModelRequest(model_id=model_id),
+                        metadata=self._metadata(), timeout=CANCELLATION_GRACE_SECONDS,
+                    )
+                    if response.unloaded or response.error.code == "model_not_loaded":
+                        break
+                    await asyncio.sleep(0.01)
+        except Exception:
+            if self._hard_stop is None:
+                raise
+            await self._hard_stop()
+        self._model_id = self._worker.loaded_model_id = None
+        self._unloaded_model_id = model_id
+
     @property
     def _loaded_model_id(self) -> str:
         if self._model_id is None:
@@ -313,23 +355,45 @@ class _LeaseSynthesisStream(AsyncIterator[engine_pb2.SynthesisEvent]):
         self._call = call
         self._iterator = call.__aiter__()
         self._closed = False
+        self._close_task: asyncio.Task[None] | None = None
+        self._terminal = False
 
     def __aiter__(self) -> _LeaseSynthesisStream:
         return self
 
     async def __anext__(self) -> engine_pb2.SynthesisEvent:
         try:
-            return await self._iterator.__anext__()
+            event = await self._iterator.__anext__()
+            if event.HasField("result") or event.HasField("error"):
+                self._terminal = True
+            return event
+        except StopAsyncIteration:
+            self._terminal = True
+            await self.aclose()
+            raise
         except BaseException:
             await self.aclose()
             raise
 
     async def aclose(self) -> None:
-        if self._closed:
-            return
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close())
+        cancellation: asyncio.CancelledError | None = None
+        while not self._close_task.done():
+            try:
+                await asyncio.shield(self._close_task)
+            except asyncio.CancelledError as error:
+                cancellation = error
+        self._close_task.result()
+        if cancellation is not None:
+            raise cancellation
+
+    async def _close(self) -> None:
         self._closed = True
         try:
             self._call.cancel()
+            if not self._terminal:
+                await self._lease._cancel_synthesis()
         finally:
             self._lease._release_synthesis(self)
 

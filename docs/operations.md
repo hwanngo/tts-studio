@@ -65,9 +65,32 @@ uses one serialized runtime replica, explicit ONNX/CPU `int8` or `fp32` selectio
 offline codec snapshot; configurable replicas remain deferred. ONNX thread count is independent
 of replica count.
 
-The supervisor performs bounded authenticated health checks, drains Workers before planned restarts, and propagates cancellation. An unexpected process exit or failed health check marks the replica unhealthy, records sanitized diagnostics, cleans up its managed launch files, and attempts up to three consecutive replacements with capped exponential backoff. Planned shutdown cancels watchers before cleanup, preventing restart races; exhausted replacements remain unhealthy until an explicit lifecycle action. Each POSIX launch durably records a pending unique owner claim before spawn, starts the Worker in an isolated process group, then finalizes the record with its PID. Startup reconciliation can recover the pending spawn window by locating exactly one group leader carrying that claim. It revalidates the claim and process-group identity immediately before signaling, retains uncertain records, and never signals an unrelated PID or group. Planned and failure cleanup signal the verified group, including helper descendants, and remove the owner record only after the original group members terminate. Windows launches retain authenticated direct-child lifecycle while Core owns the process handle, including graceful and forced reaping, but do not provide durable orphan recovery or descendant containment after Core loss. Sanitized startup/restart diagnostics are exposed through the runtime response and existing health/status surfaces; the supervisor does not publish restart-history events through Models, Jobs, CLI, or SSE.
+The supervisor performs bounded authenticated health checks, drains Workers before planned restarts, and propagates cancellation. An unexpected process exit or failed health check marks the replica unhealthy, records sanitized diagnostics, cleans up its managed launch files, and attempts up to three consecutive replacements with capped exponential backoff. Planned shutdown cancels watchers before cleanup, preventing restart races; exhausted replacements remain unhealthy until an explicit lifecycle action. Failed termination retains the quarantined process and its ownership resources so a subsequent stop can retry cleanup. A replica remains owned during failure cleanup, including when planned shutdown interrupts its watcher.
 
-Generation Jobs hold the Worker lease only for the active synthesis. Optional alignment Jobs for
+Each POSIX launch durably records a pending unique owner claim before spawn, starts the Worker in an isolated process group, then finalizes the record with its PID. Startup reconciliation can recover the pending spawn window by locating exactly one group leader carrying that claim. It revalidates the claim and process-group identity immediately before signaling, retains uncertain records, and never signals an unrelated PID or group. Planned and failure cleanup signal the verified group, including helper descendants, and remove the owner record only after group termination is verified.
+
+Windows launches use an unnamed, non-inheritable, kill-on-close Job Object with breakaway disabled. A trusted Core Python standard-library gate blocks on a private pipe until Job assignment succeeds; only then does it spawn the configured isolated Worker command. Assignment failure never starts engine code. Forced and planned process cleanup terminate the Job and verify that its active-process count reaches zero before closing the handle. Failed termination retains the Job handle for retry. Closing Core's last Job handle, including on Core exit, asks Windows to terminate contained descendants. There is no durable Windows orphan-owner record. The portable gate and cleanup-abstraction tests run on every host; native Job descendant coverage requires the Windows test runner and is skipped on other platforms. This uses the documented [Windows Job Object containment model](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+
+Sanitized startup/restart diagnostics are exposed through the runtime response and existing health/status surfaces; the supervisor does not publish restart-history events through Models, Jobs, CLI, or SSE.
+
+Generation and alignment operations wait for supervisor lease admission. Separate ready replicas
+can work concurrently; excess requests wait for capacity, and an unhealthy replica cannot be
+admitted or make its healthy siblings unavailable. A Generation Job holds its replica through
+synthesis, artifact finalization, and failure/unload cleanup. The same lease ordering protects
+alignment cleanup. Model-removal pins and leased-replica unload refusal still apply.
+
+Interrupted synthesis cancels the gRPC stream and allows at most 500 ms for authenticated
+`UnloadModel` to confirm native quiescence. A locally cancelled gRPC call or a READY Health response
+alone is not proof of native termination. If unloading does not confirm release, Core quarantines
+that replica and invokes the supervisor's hard-stop operation: verified POSIX group SIGKILL or
+Windows Job termination. Forced child reaping is bounded to five seconds per wait, and POSIX group
+drain checks are separately bounded. A termination/identity failure reports cleanup failure and
+prevents reuse and replacement; it never claims that the native call stopped. Successful forced
+cleanup permits the existing bounded replacement policy. Repeated stream-close callers wait for
+the same cleanup, and a later stop of an already terminated replica cannot affect its replacement.
+Cooperative cancellation unloads the model, so later use must load it again.
+
+Optional alignment Jobs for
 completed retained generations also pin the Model Installation while queued or running. Core copies
 the retained WAV to a private read-only managed snapshot for alignment, revalidates the original
 artifact identity before and after the Worker call, and removes only the private snapshot. Alignment
@@ -143,10 +166,9 @@ backlog. Completed remediation includes owner-only managed-directory and identit
 operations, readiness-file hardening, crash/orphan supervision with bounded replacement, bounded
 direct Worker/reference inputs, migration-gap detection, protocol compatibility checks, provider
 egress policy, cancellation quarantine, bounded generation requests, terminal text redaction,
-and explicit idempotent Generation retry. Remaining work is limited to a stronger operation that
-can forcibly terminate a native SDK call. The implemented
-cancellation contract waits a bounded interval, quarantines a Worker/runtime that ignores
-cancellation, and fails unload/reuse closed; it does not pretend the native call stopped.
+and explicit idempotent Generation retry, supervisor capacity admission, and forced native-call
+containment through verified POSIX groups or Windows Job Objects. Native Windows execution remains
+a platform CI verification requirement; portable tests do not substitute for that evidence.
 Retained transient failures with reusable voice sources support an explicit new attempt; cancelled,
 non-retained, consumed-reference, and cleanup-failed attempts cannot be regenerated through retry.
 Startup cleanup failures still require repair and Core restart. Other documents link here instead
@@ -185,6 +207,10 @@ persists that relationship with a unique SQLite index. Retried jobs receive new 
 own artifacts; original attempts and their errors remain inspectable. A crash between persisting
 the queued successor and scheduling it is handled by ordinary queued-job startup recovery.
 Requests for a job with an existing successor return that successor without synthesizing again.
+If a transient retained attempt leaves a runtime that cannot unload, successful supervised process
+termination preserves the original retryable Worker error. Explicit retry waits for cleanup and
+healthy replacement capacity before handing a fresh request to a new lease. No audio stream is
+replayed automatically, and failed termination becomes non-retryable `cleanup_failed`.
 
 Voice previews are a separate temporary path. Core validates the short request, synthesizes a WAV,
 and returns it directly without creating a Generation Job, Audio Artifact, or History row. The

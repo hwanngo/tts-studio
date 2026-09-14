@@ -15,7 +15,7 @@ import sys
 import time
 from asyncio.subprocess import Process
 from collections.abc import AsyncIterator, Coroutine, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -35,6 +35,7 @@ from tts_studio.workers.generation import (
     WorkerOperationError,
 )
 from tts_studio.workers.process import WorkerLaunchSpec, WorkerProcess, WorkerStatus
+from tts_studio.workers.windows_job import job_for, launch_in_job, terminate_job_process
 
 _TOKEN_METADATA_KEY = "x-tts-worker-token"
 _OWNER_CLAIM_ENV = "TTS_STUDIO_WORKER_OWNER_CLAIM"
@@ -45,6 +46,7 @@ _CAPABILITY_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _HEALTH_TIMEOUT_SECONDS = 1.0
 _DESCRIBE_TIMEOUT_SECONDS = 10.0
 _SHUTDOWN_TIMEOUT_SECONDS = 5.0
+_FORCED_REAP_TIMEOUT_SECONDS = 5.0
 _ORPHAN_TERMINATION_TIMEOUT_SECONDS = 0.25
 _RESTART_MAX_ATTEMPTS = 3
 _RESTART_BASE_DELAY_SECONDS = 0.05
@@ -104,6 +106,7 @@ class WorkerSupervisor:
         self._replicas: dict[str, dict[int, WorkerProcess]] = {}
         self._launches: dict[str, WorkerLaunchSpec] = {}
         self._lifecycle_lock = asyncio.Lock()
+        self._capacity_changed = asyncio.Condition(self._lifecycle_lock)
         self._leased_engines: set[tuple[str, int]] = set()
         self._watch_tasks: dict[tuple[str, int], asyncio.Task[None]] = {}
         self._replica_status: dict[tuple[str, int], WorkerStatus] = {}
@@ -197,8 +200,8 @@ class WorkerSupervisor:
                         start_new_session=True,
                     )
                 else:  # pragma: no cover - exercised on Windows
-                    process = await asyncio.create_subprocess_exec(
-                        *arguments,
+                    process = await launch_in_job(
+                        arguments,
                         stdout=stdout,
                         stderr=stderr,
                         cwd=str(launch.cwd),
@@ -274,6 +277,7 @@ class WorkerSupervisor:
                 diagnostic["last_failure"] = previous["last_failure"]
             self._startup_diagnostics[engine_id] = diagnostic
             self._watch_tasks[key] = asyncio.create_task(self._watch_worker(worker))
+            self._capacity_changed.notify_all()
             return worker
         except BaseException:  # noqa: BLE001
             try:
@@ -365,6 +369,8 @@ class WorkerSupervisor:
             pid=worker.process.pid,
         )
         async with self._lifecycle_lock:
+            if getattr(worker, "quarantined", False) or self._replicas.get(engine_id, {}).get(replica_id) is not worker:
+                return WorkerStatus(engine_id, False, "worker is quarantined", worker.process.pid)
             self._replica_status[(engine_id, replica_id)] = status
         return status
 
@@ -454,13 +460,11 @@ class WorkerSupervisor:
                 worker.engine_id, False, failure_message, worker.process.pid
             )
             launch = self._launches[worker.engine_id]
-            self._replicas[worker.engine_id].pop(worker.replica_id, None)
-            if self._workers.get(worker.engine_id) is worker:
-                replacement = next(iter(self._replicas[worker.engine_id].values()), None)
-                if replacement is not None:
-                    self._workers[worker.engine_id] = replacement
-                else:
-                    self._workers.pop(worker.engine_id, None)
+            self._startup_diagnostics[worker.engine_id] = {
+                "status": "restarting", "message": failure_message,
+                "restart_count": self._restart_attempts.get(key, 0),
+            }
+            worker.quarantined = True
         try:
             await _cleanup_resources(
                 self._layout,
@@ -472,13 +476,27 @@ class WorkerSupervisor:
             )
         except Exception as error:  # noqa: BLE001 - cleanup failure exhausts safe replacement
             async with self._lifecycle_lock:
+                worker.quarantined = True
                 self._startup_diagnostics[worker.engine_id] = {
                     "status": "failed",
                     "message": _safe_diagnostic(error),
                     "last_failure": failure_message,
                     "restart_count": self._restart_attempts.get(key, 0),
                 }
+                self._capacity_changed.notify_all()
             return
+
+        async with self._lifecycle_lock:
+            worker.terminated = True
+            if self._stopping or self._replicas.get(worker.engine_id, {}).get(worker.replica_id) is not worker:
+                return
+            self._replicas[worker.engine_id].pop(worker.replica_id, None)
+            if self._workers.get(worker.engine_id) is worker:
+                replacement = next(iter(self._replicas[worker.engine_id].values()), None)
+                if replacement is not None:
+                    self._workers[worker.engine_id] = replacement
+                else:
+                    self._workers.pop(worker.engine_id, None)
 
         for consecutive_attempt in range(1, _RESTART_MAX_ATTEMPTS + 1):
             await asyncio.sleep(
@@ -511,6 +529,7 @@ class WorkerSupervisor:
                         "last_failure": failure_message,
                         "restart_count": restart_count,
                     }
+                    self._capacity_changed.notify_all()
                 else:
                     return
         self._watch_tasks.pop(key, None)
@@ -656,34 +675,94 @@ class WorkerSupervisor:
         if errors:
             raise errors[0]
 
+    async def hard_stop(self, worker: WorkerProcess) -> None:
+        """Quarantine one owned replica, prove forced exit, then replace it."""
+        key = (worker.engine_id, worker.replica_id)
+        async with self._capacity_changed:
+            if worker.terminated:
+                return
+            if self._replicas.get(worker.engine_id, {}).get(worker.replica_id) is not worker:
+                raise RuntimeError("Worker is no longer owned by this supervisor")
+            worker.quarantined = True
+            self._replica_status[key] = WorkerStatus(
+                worker.engine_id, False, "worker cancellation did not drain", worker.process.pid
+            )
+            watcher = self._watch_tasks.pop(key, None)
+            if watcher is not None:
+                watcher.cancel()
+            self._startup_diagnostics[worker.engine_id] = {
+                "status": "restarting", "message": "worker cancellation did not drain",
+                "restart_count": self._restart_attempts.get(key, 0),
+            }
+            self._capacity_changed.notify_all()
+        if watcher is not None:
+            await asyncio.gather(watcher, return_exceptions=True)
+        try:
+            await _complete_cleanup(_terminate_and_reap(worker.process, worker.owner_file, force=True))
+        except BaseException:
+            async with self._capacity_changed:
+                self._startup_diagnostics[worker.engine_id]["status"] = "failed"
+                self._capacity_changed.notify_all()
+            raise
+        async with self._capacity_changed:
+            worker.terminated = True
+            if not self._stopping:
+                self._watch_tasks[key] = asyncio.create_task(self._watch_worker(worker))
+            self._capacity_changed.notify_all()
+
     @asynccontextmanager
-    async def acquire(self, model: ModelInstallation) -> AsyncIterator[WorkerLease]:
+    async def acquire(self, model: ModelInstallation, *, wait: bool = False) -> AsyncIterator[WorkerLease]:
         """Acquire the single generation replica for a pinned model."""
         engine_id = _model_engine_id(model)
-        async with self._lifecycle_lock:
+        async with self._capacity_changed:
+            while wait and not self._admissible_replicas(engine_id):
+                diagnostic = self._startup_diagnostics.get(engine_id, {}).get("status")
+                healthy = self._admissible_replicas(engine_id, include_leased=True)
+                unavailable = not healthy and diagnostic != "restarting" and (
+                    not self._replicas.get(engine_id) or diagnostic == "failed"
+                )
+                if self._stopping or unavailable:
+                    raise RuntimeError(f"worker {engine_id!r} is not running")
+                await self._capacity_changed.wait()
             worker = self._workers.get(engine_id)
             if worker is None:
                 raise RuntimeError(f"worker {engine_id!r} is not running")
-            replicas = tuple(self._replicas.get(engine_id, {}).items())
-            if not replicas:
-                replicas = ((0, worker),)
-            selected = next(
-                ((replica_id, item) for replica_id, item in replicas if (engine_id, replica_id) not in self._leased_engines),
-                None,
-            )
+            selected = next(iter(self._admissible_replicas(engine_id)), None)
             if selected is None:
                 raise WorkerCapacityError("all Worker replicas are already leased")
             replica_id, worker = selected
             self._leased_engines.add((engine_id, replica_id))
-        lease = GrpcWorkerLease(worker)
+        lease = GrpcWorkerLease(worker, hard_stop=lambda: self.hard_stop(worker))
         try:
             yield lease
         finally:
             try:
                 await lease.aclose()
             finally:
-                async with self._lifecycle_lock:
+                async with self._capacity_changed:
                     self._leased_engines.discard((engine_id, replica_id))
+                    self._capacity_changed.notify_all()
+
+    def acquire_waiting(self, model: ModelInstallation) -> AbstractAsyncContextManager[WorkerLease]:
+        """Wait for a healthy free replica without serializing independent replicas."""
+        return self.acquire(model, wait=True)
+
+    def _admissible_replicas(
+        self, engine_id: str, *, include_leased: bool = False
+    ) -> list[tuple[int, WorkerProcess]]:
+        replicas = tuple(self._replicas.get(engine_id, {}).items())
+        if not replicas and engine_id in self._workers:
+            replicas = ((0, self._workers[engine_id]),)
+        return [
+            (replica_id, worker)
+            for replica_id, worker in replicas
+            if (include_leased or (engine_id, replica_id) not in self._leased_engines)
+            and not getattr(worker, "quarantined", False)
+            and (
+                (status := self._replica_status.get((engine_id, replica_id))) is None
+                or status.ready
+            )
+        ]
 
     async def _running_worker(self, engine_id: str) -> WorkerProcess:
         async with self._lifecycle_lock:
@@ -696,6 +775,7 @@ class WorkerSupervisor:
         """Close every channel, then terminate and reap every owned child."""
         async with self._lifecycle_lock:
             self._stopping = True
+            self._capacity_changed.notify_all()
             tasks = tuple(self._watch_tasks.values())
             self._watch_tasks.clear()
             for task in tasks:
@@ -729,6 +809,10 @@ class WorkerSupervisor:
                 )
             finally:
                 for worker, reap_result in zip(workers, reap_results, strict=True):
+                    if isinstance(reap_result, BaseException):
+                        worker.quarantined = True
+                        continue
+                    worker.terminated = True
                     self._leased_engines = {
                         key for key in self._leased_engines if key[0] != worker.engine_id
                     }
@@ -1390,8 +1474,11 @@ async def _cleanup_resources(
 
 
 async def _terminate_and_reap(
-    process: Process, owner_file: Path | None = None
+    process: Process, owner_file: Path | None = None, *, force: bool = False
 ) -> None:
+    if job_for(process) is not None:
+        await terminate_job_process(process, timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+        return
     containment = (
         _verified_process_group(process.pid, owner_file)
         if owner_file is not None and os.name != "nt"
@@ -1402,7 +1489,7 @@ async def _terminate_and_reap(
     if containment is None:
         if process.returncode is None:
             try:
-                process.terminate()
+                process.kill() if force else process.terminate()
             except ProcessLookupError:
                 pass
         try:
@@ -1413,14 +1500,18 @@ async def _terminate_and_reap(
                     process.kill()
                 except ProcessLookupError:
                     pass
-            await process.wait()
+            await asyncio.wait_for(process.wait(), timeout=_FORCED_REAP_TIMEOUT_SECONDS)
         return
 
     record, snapshot = containment
-    if snapshot.members and not _signal_verified_group(record, snapshot, signal.SIGTERM):
+    if snapshot.members and not _signal_verified_group(
+        record, snapshot, signal.SIGKILL if force else signal.SIGTERM
+    ):
         raise RuntimeError("Worker process-group identity changed before termination")
     try:
-        await asyncio.wait_for(process.wait(), timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+        await asyncio.wait_for(
+            process.wait(), timeout=_FORCED_REAP_TIMEOUT_SECONDS if force else _SHUTDOWN_TIMEOUT_SECONDS
+        )
     except TimeoutError:
         current = _verified_group_snapshot(record)
         if current is None or (
@@ -1428,7 +1519,7 @@ async def _terminate_and_reap(
             and not _signal_verified_group(record, current, signal.SIGKILL)
         ):
             raise RuntimeError("Worker process-group identity changed before forced termination")
-        await process.wait()
+        await asyncio.wait_for(process.wait(), timeout=_FORCED_REAP_TIMEOUT_SECONDS)
 
     deadline = asyncio.get_running_loop().time() + _ORPHAN_TERMINATION_TIMEOUT_SECONDS
     while asyncio.get_running_loop().time() < deadline:

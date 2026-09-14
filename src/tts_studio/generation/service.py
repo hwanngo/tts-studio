@@ -14,6 +14,7 @@ import sys
 import tempfile
 import wave
 from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, cast
@@ -69,6 +70,7 @@ from tts_studio.storage.layout import ManagedDirectoryName, StorageLayout, Unsaf
 from tts_studio.voices.service import SavedVoiceService
 from tts_studio.workers.generation import (
     AlignmentCapability,
+    WorkerLease,
     WorkerOperationError,
     WorkerReplicaPool,
     build_synthesis_request,
@@ -204,7 +206,6 @@ class GenerationService:
         self._retention_default_provider = retention_default_provider
         self._scheduler = GenerationScheduler(self._run_job)
         self._alignment_scheduler = GenerationScheduler(self._run_alignment)
-        self._replica_gate = asyncio.Lock()
         self._retry_gate = asyncio.Lock()
         self._streams: dict[str, AsyncIterator[engine_pb2.SynthesisEvent]] = {}
         self._pcm_subscribers: dict[str, set[asyncio.Queue[bytes | None]]] = {}
@@ -252,7 +253,7 @@ class GenerationService:
             except ProviderNotFoundError as error:
                 raise GenerationModelNotFoundError from error
         reference_handle: _ReferenceHandle | None = None
-        async with self._replica_gate, self._worker_pool.acquire(model) as lease:
+        async with self._acquire_worker(model) as lease:
             _require_streaming_capability(lease)
             _require_option_capabilities(lease, options)
             if reference_id is not None or saved_voice_id is not None:
@@ -391,7 +392,7 @@ class GenerationService:
         if not isinstance(correlation_id, str) or not correlation_id.strip() or "\0" in correlation_id:
             raise GenerationRequestError("correlation_id must be a non-empty safe string")
         model = self._get_model(job.model_id)
-        async with self._replica_gate, self._worker_pool.acquire(model) as lease:
+        async with self._acquire_worker(model) as lease:
             self._verify_alignment_artifact(artifact)
             existing = self.get_alignment(job.id)
             if existing is not None and not _alignment_is_retryable(existing):
@@ -830,7 +831,7 @@ class GenerationService:
 
     async def list_voices(self, model_id: str) -> tuple[engine_pb2.PresetVoice, ...]:
         model = self._get_model(model_id)
-        async with self._replica_gate, self._worker_pool.acquire(model) as lease:
+        async with self._acquire_worker(model) as lease:
             _require_preset_capability(lease)
             await lease.load_model(model)
             try:
@@ -853,7 +854,7 @@ class GenerationService:
             except ProviderNotFoundError as error:
                 raise GenerationModelNotFoundError from error
 
-        async with self._replica_gate, self._worker_pool.acquire(model) as lease:
+        async with self._acquire_worker(model) as lease:
             _require_streaming_capability(lease)
             _require_preset_capability(lease)
             stream: AsyncIterator[engine_pb2.SynthesisEvent] | None = None
@@ -1079,7 +1080,7 @@ class GenerationService:
         self._pcm_replay_disabled.clear()
 
     async def _run_alignment(self, job_id: str) -> None:
-        async with self._replica_gate:
+        async with AsyncExitStack() as leases:
             loaded_lease: Any | None = None
             loaded_model: ModelInstallation | None = None
             artifact: AudioArtifact | None = None
@@ -1091,21 +1092,21 @@ class GenerationService:
                 self._verify_alignment_artifact(artifact)
                 model = self._get_model(job.model_id)
                 self._registry.start_alignment(job.id)
-                async with self._worker_pool.acquire(model) as lease:
-                    await lease.load_model(model)
-                    loaded_lease, loaded_model = lease, model
-                    capability = _require_alignment_capability(lease.capabilities)
-                    snapshot = self._create_alignment_snapshot(artifact)
-                    try:
-                        response = await lease.align(engine_pb2.AlignRequest(model_id=model.id, audio_path=snapshot[1], transcript=job.text))
-                    finally:
-                        snapshot[0].unlink(missing_ok=True)
-                    result = _alignment_result_from_worker(response, job=job, artifact=artifact, capability=capability)
-                    self._verify_alignment_artifact(artifact)
-                    self._registry.complete_alignment(job.id, result)
-                    completed = True
-                    await self._unload_model(lease, model)
-                    loaded_lease = loaded_model = None
+                lease = await leases.enter_async_context(self._acquire_worker(model))
+                await lease.load_model(model)
+                loaded_lease, loaded_model = lease, model
+                capability = _require_alignment_capability(lease.capabilities)
+                snapshot = self._create_alignment_snapshot(artifact)
+                try:
+                    response = await lease.align(engine_pb2.AlignRequest(model_id=model.id, audio_path=snapshot[1], transcript=job.text))
+                finally:
+                    snapshot[0].unlink(missing_ok=True)
+                result = _alignment_result_from_worker(response, job=job, artifact=artifact, capability=capability)
+                self._verify_alignment_artifact(artifact)
+                self._registry.complete_alignment(job.id, result)
+                completed = True
+                await self._unload_model(lease, model)
+                loaded_lease = loaded_model = None
             except asyncio.CancelledError:
                 failure = ("alignment_cancelled", True)
             except GenerationCapabilityError:
@@ -1147,7 +1148,7 @@ class GenerationService:
                         self._registry.fail_alignment(job_id, _alignment_error(*failure))
 
     async def _run_job(self, job_id: str) -> None:
-        async with self._replica_gate:
+        async with AsyncExitStack() as leases:
             writer: WavArtifactWriter | None = None
             stream: AsyncIterator[engine_pb2.SynthesisEvent] | None = None
             loaded_lease: Any | None = None
@@ -1193,89 +1194,89 @@ class GenerationService:
                         "Reference handoff was lost; generation requires recovery.",
                         retryable=True,
                     )
-                async with self._worker_pool.acquire(model) as lease:
-                    if not lease.capabilities.supports("streaming_synthesis"):
-                        raise _GenerationFailure(
-                            "capability_unsupported",
-                            "The Worker does not support streaming synthesis.",
-                            retryable=True,
-                        )
-                    loading = self._transition(job, GenerationState.LOADING, "Loading the model.")
-                    await lease.load_model(model)
-                    loaded_lease = lease
-                    loaded_model = model
-                    generating = self._transition(loading, GenerationState.GENERATING, "Generating audio.")
-                    writer = WavArtifactWriter(self._layout, _artifact_id(job.id))
-                    if job.reference_id is None and job.saved_voice_id is None and not lease.capabilities.supports("preset_voices"):
-                        raise _GenerationFailure(
-                            "capability_unsupported",
-                            "The Worker does not support preset voices.",
-                            retryable=True,
-                        )
-                    options = job.options
-                    _require_option_capabilities(lease, options)
-                    stream = lease.synthesize(
-                        build_synthesis_request(
-                            model.id,
-                            job.text,
-                            voice_id=job.voice_id,
-                            reference_path=reference_handle.relative_path if reference_handle else None,
-                            transcript=reference_handle.transcript if reference_handle else None,
-                            provider_config=_provider_config(self._provider_registry, job.provider_id)
-                            if job.provider_id is not None else None,
-                            speed=options.speed if options else None,
-                            pitch=options.pitch if options else None,
-                            volume=options.volume if options else None,
-                        )
+                lease = await leases.enter_async_context(self._acquire_worker(model))
+                if not lease.capabilities.supports("streaming_synthesis"):
+                    raise _GenerationFailure(
+                        "capability_unsupported",
+                        "The Worker does not support streaming synthesis.",
+                        retryable=True,
                     )
-                    self._streams[job.id] = stream
-                    result = await self._consume_stream(job, stream, writer)
-                    finalizing = self._transition(
-                        generating,
-                        GenerationState.FINALIZING,
-                        "Finalizing the WAV artifact.",
-                        bytes_written=result.byte_count,
-                        frame_count=result.frame_count,
+                loading = self._transition(job, GenerationState.LOADING, "Loading the model.")
+                await lease.load_model(model)
+                loaded_lease = lease
+                loaded_model = model
+                generating = self._transition(loading, GenerationState.GENERATING, "Generating audio.")
+                writer = WavArtifactWriter(self._layout, _artifact_id(job.id))
+                if job.reference_id is None and job.saved_voice_id is None and not lease.capabilities.supports("preset_voices"):
+                    raise _GenerationFailure(
+                        "capability_unsupported",
+                        "The Worker does not support preset voices.",
+                        retryable=True,
+                    )
+                options = job.options
+                _require_option_capabilities(lease, options)
+                stream = lease.synthesize(
+                    build_synthesis_request(
+                        model.id,
+                        job.text,
+                        voice_id=job.voice_id,
+                        reference_path=reference_handle.relative_path if reference_handle else None,
+                        transcript=reference_handle.transcript if reference_handle else None,
+                        provider_config=_provider_config(self._provider_registry, job.provider_id)
+                        if job.provider_id is not None else None,
+                        speed=options.speed if options else None,
+                        pitch=options.pitch if options else None,
+                        volume=options.volume if options else None,
+                    )
+                )
+                self._streams[job.id] = stream
+                result = await self._consume_stream(job, stream, writer)
+                finalizing = self._transition(
+                    generating,
+                    GenerationState.FINALIZING,
+                    "Finalizing the WAV artifact.",
+                    bytes_written=result.byte_count,
+                    frame_count=result.frame_count,
+                    sample_rate=result.format.sample_rate,
+                    channel_count=result.format.channels,
+                )
+                artifact_id = _artifact_id(job.id)
+                if job.retain_artifact:
+                    path = writer.finalize(byte_count=result.byte_count, frame_count=result.frame_count)
+                    published_artifact_id = artifact_id
+                    self._registry.create_artifact(
+                        job_id=job.id,
+                        artifact_id=artifact_id,
+                        path=f"audio/{path.name}",
+                        byte_size=path.stat().st_size,
+                        sha256=_sha256(path),
                         sample_rate=result.format.sample_rate,
                         channel_count=result.format.channels,
-                    )
-                    artifact_id = _artifact_id(job.id)
-                    if job.retain_artifact:
-                        path = writer.finalize(byte_count=result.byte_count, frame_count=result.frame_count)
-                        published_artifact_id = artifact_id
-                        self._registry.create_artifact(
-                            job_id=job.id,
-                            artifact_id=artifact_id,
-                            path=f"audio/{path.name}",
-                            byte_size=path.stat().st_size,
-                            sha256=_sha256(path),
-                            sample_rate=result.format.sample_rate,
-                            channel_count=result.format.channels,
-                            frame_count=result.frame_count,
-                            duration_ms=result.duration_ms,
-                        )
-                    else:
-                        writer.abort()
-                    if reference_handle is not None:
-                        self._reference_handles.pop(job.id, None)
-                        if not self._release_reference(reference_handle):
-                            raise _GenerationFailure(
-                                "cleanup_failed",
-                                "Generation cleanup failed; restart Core to retry cleanup.",
-                                retryable=True,
-                            )
-                        self._registry.clear_reference_id(job.id)
-                    completed = self._registry.transition_job(
-                        finalizing.id,
-                        GenerationState.COMPLETED,
-                        bytes_written=result.byte_count,
                         frame_count=result.frame_count,
+                        duration_ms=result.duration_ms,
                     )
-                    completion_committed = True
-                    self._publish(completed, "generation.completed", "Generation completed.")
-                    await self._unload_model(lease, model)
-                    loaded_lease = None
-                    loaded_model = None
+                else:
+                    writer.abort()
+                if reference_handle is not None:
+                    self._reference_handles.pop(job.id, None)
+                    if not self._release_reference(reference_handle):
+                        raise _GenerationFailure(
+                            "cleanup_failed",
+                            "Generation cleanup failed; restart Core to retry cleanup.",
+                            retryable=True,
+                        )
+                    self._registry.clear_reference_id(job.id)
+                completed = self._registry.transition_job(
+                    finalizing.id,
+                    GenerationState.COMPLETED,
+                    bytes_written=result.byte_count,
+                    frame_count=result.frame_count,
+                )
+                completion_committed = True
+                self._publish(completed, "generation.completed", "Generation completed.")
+                await self._unload_model(lease, model)
+                loaded_lease = None
+                loaded_model = None
             except asyncio.CancelledError:
                 current = self.get(job_id)
                 if not self._closing and current.cancellation_requested and current.state in {
@@ -1662,6 +1663,12 @@ class GenerationService:
         except GenerationRecordNotFoundError:
             return False
         return job.state is GenerationState.COMPLETED
+
+    def _acquire_worker(self, model: ModelInstallation) -> AbstractAsyncContextManager[WorkerLease]:
+        # Production admission waits on the supervisor's capacity condition. Small
+        # embedded/test pools may provide only the immediate acquisition seam.
+        acquire = getattr(self._worker_pool, "acquire_waiting", self._worker_pool.acquire)
+        return cast(AbstractAsyncContextManager[WorkerLease], acquire(model))
 
     async def _unload_model(self, lease: Any, model: ModelInstallation) -> None:
         try:

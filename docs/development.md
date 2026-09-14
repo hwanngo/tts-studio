@@ -54,8 +54,9 @@ now includes managed-directory and identity-bound file hardening, Worker readine
 handling, bounded crash replacement, bounded direct inputs, provider egress enforcement, bounded
 cancellation with quarantine, migration continuity checks, protocol compatibility validation, and
 Core-over-real-gRPC alignment coverage, generation input limits, atomic terminal privacy redaction,
-and explicit idempotent Generation retry. Remaining work is the stronger native-call termination
-operation. This section intentionally does
+and explicit idempotent Generation retry. Forced native-call termination now uses supervised
+POSIX groups or Windows Job Objects; Windows execution remains a platform-specific verification
+gate. This section intentionally does
 not duplicate the backlog.
 
 The release-smoke workflow runs frontend unit/type/build checks, locale parity, Ruff,

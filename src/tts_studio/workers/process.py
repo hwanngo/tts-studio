@@ -62,3 +62,5 @@ class WorkerProcess:
     loaded_model_id: str | None = None
     replica_id: int = 0
     owner_file: Path | None = None
+    quarantined: bool = False
+    terminated: bool = False

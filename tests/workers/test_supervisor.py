@@ -1349,6 +1349,76 @@ async def test_stop_reaps_worker_when_channel_close_raises(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_repeated_hard_stop_cannot_quarantine_a_replacement(tmp_path: Path) -> None:
+    supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
+    original = await supervisor.start("fake", _FAKE_WORKER_LAUNCH)
+    try:
+        await supervisor.hard_stop(original)
+        async with asyncio.timeout(5):
+            while not (status := await supervisor.health("fake")).ready:
+                await asyncio.sleep(0.01)
+        assert status.pid != original.process.pid
+        await supervisor.hard_stop(original)
+        assert (await supervisor.health("fake")).ready
+    finally:
+        await supervisor.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_planned_stop_retains_ownership_during_failure_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
+    worker = await supervisor.start("fake", _FAKE_WORKER_LAUNCH)
+    entered = asyncio.Event()
+    cleanup = supervisor_module._cleanup_resources
+
+    async def delayed_cleanup(*args, **kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(supervisor_module, "_cleanup_resources", delayed_cleanup)
+    worker.process.kill()
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await supervisor.stop_all()
+        assert not worker.ready_file.exists(), "shutdown must own replicas still being cleaned"
+        assert worker.owner_file is None or not worker.owner_file.exists()
+    finally:
+        if worker.ready_file.exists():
+            await cleanup(supervisor._layout, worker.channel, worker.process, worker.ready_file,
+                          worker.token_file, worker.owner_file)
+
+
+@pytest.mark.asyncio
+async def test_failed_hard_stop_keeps_quarantine_and_can_be_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
+    worker = await supervisor.start("fake", _FAKE_WORKER_LAUNCH)
+    terminate = supervisor_module._terminate_and_reap
+
+    async def denied(*args, **kwargs):
+        raise OSError("signal denied")
+
+    monkeypatch.setattr(supervisor_module, "_terminate_and_reap", denied)
+    try:
+        with pytest.raises(OSError, match="signal denied"):
+            await supervisor.hard_stop(worker)
+        assert (await supervisor.health("fake")).ready is False
+        assert worker.process.returncode is None
+        assert worker in supervisor._replica_values()
+        with pytest.raises(OSError, match="signal denied"):
+            await supervisor.stop_all()
+        assert worker in supervisor._replica_values(), "failed reaping must retain ownership"
+    finally:
+        monkeypatch.setattr(supervisor_module, "_terminate_and_reap", terminate)
+        # The direct fallback makes this RED test safe even with the ownership bug.
+        await terminate(worker.process, worker.owner_file, force=True)
+        await supervisor.stop_all()
+
+
+@pytest.mark.asyncio
 async def test_startup_cleanup_reaps_after_kill_process_lookup_race(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

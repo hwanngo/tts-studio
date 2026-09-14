@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
 import sqlite3
 import wave
 from collections.abc import AsyncIterator
@@ -24,7 +25,7 @@ from tts_studio.storage.layout import StorageLayout
 from tts_studio.workers.adapters import AdapterDescriptor
 from tts_studio.workers.generation import WorkerOperationError
 from tts_studio.workers.process import WorkerLaunchSpec
-from tts_studio.workers.supervisor import WorkerSupervisor
+from tts_studio.workers.supervisor import WorkerSupervisor, _pid_alive
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _FAKE_WORKER_LAUNCH = WorkerLaunchSpec(
@@ -106,6 +107,86 @@ async def integration_context(tmp_path: Path) -> AsyncIterator[tuple[GenerationS
     finally:
         await service.close()
         await supervisor.stop_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["cancel", "retry"])
+async def test_stuck_native_inference_is_contained_before_cancellation_or_retry(
+    integration_context, mode: str,
+) -> None:
+    service, _registry, layout, _events, supervisor = integration_context
+    await supervisor.stop_all()
+    launch = WorkerLaunchSpec(
+        command=("uv", "run", "--project", "workers/fake", "python",
+                 "tests/fixtures/stuck_synthesis_worker.py"),
+        cwd=_REPOSITORY_ROOT,
+    )
+    worker = await supervisor.start("fake", launch)
+    job = await service.create(model_id="fixtures/compatible", voice_id="fake-neutral", text=mode)
+    async with asyncio.timeout(10):
+        helper_file = layout.root / "staging" / "stuck-helper.pid"
+        while not helper_file.exists():
+            await asyncio.sleep(0.01)
+        if mode == "cancel":
+            await service.cancel(job.id)
+        terminal = await service.wait(job.id)
+    assert worker.process.returncode is not None
+    if os.name != "nt":
+        assert not _pid_alive(int(helper_file.read_text()))
+    if mode == "cancel":
+        assert terminal.state is GenerationState.CANCELLED
+        assert not terminal.can_retry
+    else:
+        assert terminal.state is GenerationState.FAILED
+        assert terminal.error["code"] == "provider_unavailable"
+        assert terminal.can_retry
+        successor = await service.retry(job.id)
+        assert (await service.wait(successor.id)).state is GenerationState.COMPLETED
+        assert (await service.retry(job.id)).id == successor.id
+    assert not list((layout.root / "staging").glob(".generation-*.pcm"))
+
+
+@pytest.mark.asyncio
+async def test_ready_replicas_generate_concurrently_and_queue_excess_work(
+    integration_context, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _registry, layout, _events, supervisor = integration_context
+    model = ModelRegistry(Database(layout.database_path)).get_model("fixtures/compatible")
+    await supervisor.ensure_replicas(model, 2)
+    entered: set[str] = set()
+    release = asyncio.Event()
+    consume = service._consume_stream
+
+    async def hold_stream(job, stream, writer):
+        # Both real gRPC leases must reach synthesis before either is released.
+        entered.add(job.id)
+        await release.wait()
+        return await consume(job, stream, writer)
+
+    monkeypatch.setattr(service, "_consume_stream", hold_stream)
+    first = await service.create(model_id=model.id, voice_id="fake-neutral", text="first")
+    second_task = asyncio.create_task(
+        service.create(model_id=model.id, voice_id="fake-neutral", text="second")
+    )
+    try:
+        async with asyncio.timeout(2):
+            second = await second_task
+            while len(entered) < 2:
+                await asyncio.sleep(0.01)
+        assert service.get(first.id).state is GenerationState.GENERATING
+        assert service.get(second.id).state is GenerationState.GENERATING
+        third_task = asyncio.create_task(
+            service.create(model_id=model.id, voice_id="fake-neutral", text="third")
+        )
+        await asyncio.sleep(0.02)
+        assert not third_task.done(), "excess work must wait for replica capacity"
+    finally:
+        release.set()
+        await asyncio.gather(second_task, return_exceptions=True)
+    assert (await service.wait(first.id)).state is GenerationState.COMPLETED
+    assert (await service.wait(second.id)).state is GenerationState.COMPLETED
+    third = await asyncio.wait_for(third_task, 5)
+    assert (await service.wait(third.id)).state is GenerationState.COMPLETED
 
 
 @pytest.mark.asyncio
