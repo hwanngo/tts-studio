@@ -38,9 +38,7 @@ async def worker(
             while not ready_file.exists():
                 await asyncio.sleep(0.01)
         readiness = json.loads(ready_file.read_text(encoding="utf-8"))
-        channel = grpc.aio.insecure_channel(
-            f"{readiness['host']}:{readiness['port']}"
-        )
+        channel = grpc.aio.insecure_channel(f"{readiness['host']}:{readiness['port']}")
         try:
             yield engine_pb2_grpc.EngineWorkerStub(channel)
         finally:
@@ -53,9 +51,7 @@ async def worker(
 
 async def _load(stub: engine_pb2_grpc.EngineWorkerStub) -> None:
     response = await stub.LoadModel(
-        engine_pb2.LoadModelRequest(
-            model_id=MODEL, cache_path="models/compatible", variant="fp32"
-        ),
+        engine_pb2.LoadModelRequest(model_id=MODEL, cache_path="models/compatible", variant="fp32"),
         metadata=(("x-tts-worker-token", TOKEN),),
     )
     assert response.loaded is True
@@ -100,9 +96,7 @@ async def test_synthesis_is_deterministic_and_orders_header_chunks_progress_resu
     async def collect() -> list[engine_pb2.SynthesisEvent]:
         return [
             event
-            async for event in worker.Synthesize(
-                request, metadata=(("x-tts-worker-token", TOKEN),)
-            )
+            async for event in worker.Synthesize(request, metadata=(("x-tts-worker-token", TOKEN),))
         ]
 
     first = await collect()
@@ -121,12 +115,13 @@ async def test_synthesis_is_deterministic_and_orders_header_chunks_progress_resu
     assert [chunk.sequence for chunk in chunks] == list(range(len(chunks)))
     assert all(chunk.pcm for chunk in chunks)
     assert first[-2].progress.duration_frames == first[-1].result.total_frames
-    assert first[-1].result.duration_ms == round(
-        first[-1].result.total_frames / 48000 * 1000
+    assert first[-1].result.duration_ms == round(first[-1].result.total_frames / 48000 * 1000)
+    assert (
+        hashlib.sha256(b"".join(chunk.pcm for chunk in chunks)).hexdigest()
+        == hashlib.sha256(
+            b"".join(event.chunk.pcm for event in second if event.HasField("chunk"))
+        ).hexdigest()
     )
-    assert hashlib.sha256(b"".join(chunk.pcm for chunk in chunks)).hexdigest() == hashlib.sha256(
-        b"".join(event.chunk.pcm for event in second if event.HasField("chunk"))
-    ).hexdigest()
 
 
 @pytest.mark.asyncio
@@ -144,9 +139,7 @@ async def test_synthesis_reports_structured_errors_for_invalid_requests(
     unknown_voice = [
         event
         async for event in worker.Synthesize(
-            engine_pb2.SynthesizeRequest(
-                model_id=MODEL, voice_id="missing", text="hello"
-            ),
+            engine_pb2.SynthesizeRequest(model_id=MODEL, voice_id="missing", text="hello"),
             metadata=(("x-tts-worker-token", TOKEN),),
         )
     ]
@@ -156,9 +149,7 @@ async def test_synthesis_reports_structured_errors_for_invalid_requests(
     malformed = [
         event
         async for event in worker.Synthesize(
-            engine_pb2.SynthesizeRequest(
-                model_id=MODEL, voice_id="fake-neutral", text=""
-            ),
+            engine_pb2.SynthesizeRequest(model_id=MODEL, voice_id="fake-neutral", text=""),
             metadata=(("x-tts-worker-token", TOKEN),),
         )
     ]
@@ -209,9 +200,7 @@ async def test_synthesis_honors_cancellation_and_deadline(
         while not worker_servicer.termination_errors:
             await asyncio.sleep(0.001)
     cancellation_errors = [
-        error
-        for error in worker_servicer.termination_errors
-        if error.code == "synthesis_cancelled"
+        error for error in worker_servicer.termination_errors if error.code == "synthesis_cancelled"
     ]
     assert cancellation_errors
     assert cancellation_errors[-1].retryable is False

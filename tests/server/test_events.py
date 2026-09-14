@@ -260,8 +260,15 @@ def test_typed_generation_stream_identity_preserves_download_compatibility(
     assert generation.download_id is None
     assert (download.stream_kind, download.stream_id) == ("download", "download-one")
     assert download.download_id == "download-one"
-    assert [event.id for event in store.read_after(0, stream_kind="generation", stream_id="generation-one").events] == [generation.id]
-    assert [event.id for event in store.read_after(0, download_id="download-one").events] == [download.id]
+    assert [
+        event.id
+        for event in store.read_after(
+            0, stream_kind="generation", stream_id="generation-one"
+        ).events
+    ] == [generation.id]
+    assert [event.id for event in store.read_after(0, download_id="download-one").events] == [
+        download.id
+    ]
 
 
 def test_generation_event_payload_never_accepts_audio_bytes(tmp_path: Path) -> None:
@@ -616,9 +623,7 @@ async def test_http_events_route_honors_last_event_id_and_safe_sse_headers(
 
     async with app.router.lifespan_context(app):
         store = app.state.event_store
-        first = store.append(
-            "download.progress", {"job_id": "job-http", "phase": "downloading"}
-        )
+        first = store.append("download.progress", {"job_id": "job-http", "phase": "downloading"})
         second = store.append(
             "download.cancelled",
             {
@@ -627,9 +632,7 @@ async def test_http_events_route_honors_last_event_id_and_safe_sse_headers(
                 "message": "Model download was cancelled.",
             },
         )
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/events",
                 params={"download_id": "job-http"},
@@ -695,9 +698,7 @@ async def test_model_service_publishes_one_terminal_cancellation_event(tmp_path:
 
     assert cancelled.state is DownloadState.CANCELLED
     terminal = [
-        event
-        for event in store.read_after(0).events
-        if event.event_type == "download.cancelled"
+        event for event in store.read_after(0).events if event.event_type == "download.cancelled"
     ]
     assert len(terminal) == 1
     assert terminal[0].public_data()["job_id"] == queued.id

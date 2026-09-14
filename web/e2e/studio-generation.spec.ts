@@ -74,11 +74,17 @@ async function mockPublicApi(page: import("@playwright/test").Page, options: Moc
     const request = route.request();
     const url = new URL(request.url());
     if (url.pathname === "/api/v1/system") return route.fulfill({ json: systemStatus });
+    if (url.pathname === "/api/v1/runtime") return route.fulfill({ json: {
+      ...systemStatus,
+      workers: [{ engine_id: "fake", status: "ready", capabilities: ["streaming_synthesis", "preset_voices", "synthesis_cancellation"] }],
+    } });
+    if (url.pathname === "/api/v1/settings") return route.fulfill({ json: { retain_audio_by_default: true } });
+    if (url.pathname === "/api/v1/saved-voices") return route.fulfill({ json: [] });
     if (url.pathname === "/api/v1/models") return route.fulfill({ json: [model] });
     if (url.pathname === "/api/v1/voices") return route.fulfill({ json: [{ id: "fake-neutral", label: "Neutral", capabilities: ["preset"] }] });
     if (url.pathname === "/api/v1/generations" && request.method() === "GET") {
       if (options.generationStatus && options.generationStatus >= 400) {
-        return route.fulfill({ status: options.generationStatus, json: { error: { message: "Scheduler unavailable" } } });
+        return route.fulfill({ status: options.generationStatus, json: { error: { code: "worker_unavailable", message: "Scheduler unavailable", retryable: true } } });
       }
       return route.fulfill({ json: options.generationGet ?? [] });
     }
@@ -104,10 +110,10 @@ test("shows generation progress and supports cancellation in Chromium", async ({
 
   await page.getByLabel("Text").fill("A cancellable browser generation.");
   await page.getByRole("button", { name: "Generate speech" }).click();
-  await expect(page.getByText("Queued")).toBeVisible();
+  await expect(page.getByText("Queued", { exact: true })).toBeVisible();
   await expect(page.getByText("Generation queued")).toBeVisible();
   await page.getByRole("button", { name: "Cancel generation" }).click();
-  await expect(page.getByText("Cancelled")).toBeVisible();
+  await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel generation" })).not.toBeVisible();
 });
 
@@ -117,7 +123,7 @@ test("generates speech in Chromium and exposes finalized WAV controls", async ({
 
   await expect(page.getByRole("heading", { name: "Create speech" })).toBeVisible();
   await page.getByLabel("Text").fill("Hello from a real browser.");
-  await expect(page.getByRole("option", { name: "Neutral" })).toBeAttached();
+  await expect(page.getByRole("combobox", { name: "Runtime voice" })).toHaveValue("Neutral");
   await page.getByRole("button", { name: "Generate speech" }).click();
 
   await expect(page.getByText("Completed")).toBeVisible();
@@ -149,6 +155,6 @@ test("shows the Jobs error state in Chromium", async ({ page }) => {
   await mockPublicApi(page, { generationStatus: 503 });
   await page.goto("/jobs");
 
-  await expect(page.getByRole("heading", { name: "Jobs unavailable" })).toBeVisible();
-  await expect(page.getByRole("alert")).toContainText("Scheduler unavailable");
+  await expect(page.getByRole("alert")).toContainText("Jobs unavailable");
+  await expect(page.getByRole("alert")).toContainText("The speech worker is unavailable");
 });

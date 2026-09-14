@@ -53,6 +53,8 @@ _RESTART_BASE_DELAY_SECONDS = 0.05
 _RESTART_MAX_DELAY_SECONDS = 1.0
 _SUPERVISION_INTERVAL_SECONDS = 0.5
 _MAX_READY_BYTES = 16 * 1024
+
+
 @dataclass(frozen=True)
 class _ProcessIdentity:
     pid: int
@@ -125,7 +127,9 @@ class WorkerSupervisor:
                 return await self._start_locked(engine_id, launch, replica_id)
             except Exception as error:
                 self._startup_diagnostics[engine_id] = {
-                    "status": "failed", "message": _safe_diagnostic(error), "restart_count": 0
+                    "status": "failed",
+                    "message": _safe_diagnostic(error),
+                    "restart_count": 0,
                 }
                 raise
 
@@ -155,9 +159,7 @@ class WorkerSupervisor:
             )
             ready_file = run_directory / f"worker-{file_key}-{launch_id}.json"
             owner_file = (
-                run_directory / f"worker-{file_key}-{launch_id}.owner"
-                if os.name != "nt"
-                else None
+                run_directory / f"worker-{file_key}-{launch_id}.owner" if os.name != "nt" else None
             )
             if owner_file is not None:
                 _write_owner_record(
@@ -187,9 +189,10 @@ class WorkerSupervisor:
             logs_directory = self._layout.checked_directory("logs")
             stdout_path = logs_directory / f"worker-{file_key}-{launch_id}.stdout.log"
             stderr_path = logs_directory / f"worker-{file_key}-{launch_id}.stderr.log"
-            with _open_private_append(stdout_path) as stdout, _open_private_append(
-                stderr_path
-            ) as stderr:
+            with (
+                _open_private_append(stdout_path) as stdout,
+                _open_private_append(stderr_path) as stderr,
+            ):
                 if os.name != "nt":
                     process = await asyncio.create_subprocess_exec(
                         *arguments,
@@ -271,7 +274,9 @@ class WorkerSupervisor:
             restart_count = self._restart_attempts.get(key, 0)
             previous = self._startup_diagnostics.get(engine_id, {})
             diagnostic: dict[str, object] = {
-                "status": "ready", "message": "worker is ready", "restart_count": restart_count
+                "status": "ready",
+                "message": "worker is ready",
+                "restart_count": restart_count,
             }
             if restart_count and "last_failure" in previous:
                 diagnostic["last_failure"] = previous["last_failure"]
@@ -326,10 +331,14 @@ class WorkerSupervisor:
                 return WorkerStatus(engine_id, False, "worker is not running", None)
         if not workers:
             return WorkerStatus(engine_id, False, "worker is not running", None)
-        results = await asyncio.gather(*(self._health_replica(engine_id, rid, worker) for rid, worker in workers))
+        results = await asyncio.gather(
+            *(self._health_replica(engine_id, rid, worker) for rid, worker in workers)
+        )
         return next((status for status in results if not status.ready), results[0])
 
-    async def _health_replica(self, engine_id: str, replica_id: int, worker: WorkerProcess) -> WorkerStatus:
+    async def _health_replica(
+        self, engine_id: str, replica_id: int, worker: WorkerProcess
+    ) -> WorkerStatus:
         async with self._lifecycle_lock:
             known = self._replica_status.get((engine_id, replica_id))
         if known is not None and not known.ready:
@@ -351,7 +360,11 @@ class WorkerSupervisor:
                 timeout=_HEALTH_TIMEOUT_SECONDS,
             )
         except Exception as error:  # noqa: BLE001
-            code = error.code().name if isinstance(error, grpc.aio.AioRpcError) else type(error).__name__
+            code = (
+                error.code().name
+                if isinstance(error, grpc.aio.AioRpcError)
+                else type(error).__name__
+            )
             status = WorkerStatus(
                 engine_id=engine_id,
                 ready=False,
@@ -369,7 +382,10 @@ class WorkerSupervisor:
             pid=worker.process.pid,
         )
         async with self._lifecycle_lock:
-            if getattr(worker, "quarantined", False) or self._replicas.get(engine_id, {}).get(replica_id) is not worker:
+            if (
+                getattr(worker, "quarantined", False)
+                or self._replicas.get(engine_id, {}).get(replica_id) is not worker
+            ):
                 return WorkerStatus(engine_id, False, "worker is quarantined", worker.process.pid)
             self._replica_status[(engine_id, replica_id)] = status
         return status
@@ -389,7 +405,7 @@ class WorkerSupervisor:
     def _reconcile_orphans_sync(self) -> None:
         try:
             run_directory = self._layout.checked_directory("run")
-        except (OSError, RuntimeError):
+        except OSError, RuntimeError:
             return
         registered_pids = {worker.process.pid for worker in self._replica_values()}
         for owner_file in run_directory.glob("worker-*.owner"):
@@ -410,9 +426,7 @@ class WorkerSupervisor:
                     if pending_pids is None or len(pending_pids) > 1:
                         continue
                     if not pending_pids:
-                        _remove_owner_record_files(
-                            self._layout, run_directory, owner_file, record
-                        )
+                        _remove_owner_record_files(self._layout, run_directory, owner_file, record)
                         continue
                     identity = pending_pids[0]
                     pid = identity.pid
@@ -428,7 +442,7 @@ class WorkerSupervisor:
                 if not _terminate_verified_orphan(pid, record):
                     continue
                 _remove_owner_record_files(self._layout, run_directory, owner_file, record)
-            except (OSError, UnicodeError, json.JSONDecodeError, AttributeError, RuntimeError):
+            except OSError, UnicodeError, json.JSONDecodeError, AttributeError, RuntimeError:
                 continue
 
     async def _watch_worker(self, worker: WorkerProcess) -> None:
@@ -461,7 +475,8 @@ class WorkerSupervisor:
             )
             launch = self._launches[worker.engine_id]
             self._startup_diagnostics[worker.engine_id] = {
-                "status": "restarting", "message": failure_message,
+                "status": "restarting",
+                "message": failure_message,
                 "restart_count": self._restart_attempts.get(key, 0),
             }
             worker.quarantined = True
@@ -489,7 +504,10 @@ class WorkerSupervisor:
 
         async with self._lifecycle_lock:
             worker.terminated = True
-            if self._stopping or self._replicas.get(worker.engine_id, {}).get(worker.replica_id) is not worker:
+            if (
+                self._stopping
+                or self._replicas.get(worker.engine_id, {}).get(worker.replica_id) is not worker
+            ):
                 return
             self._replicas[worker.engine_id].pop(worker.replica_id, None)
             if self._workers.get(worker.engine_id) is worker:
@@ -535,7 +553,6 @@ class WorkerSupervisor:
                     return
         self._watch_tasks.pop(key, None)
 
-
     async def validate_model(
         self,
         engine_id: str,
@@ -561,13 +578,11 @@ class WorkerSupervisor:
         )
         if response.protocol.major != _PROTOCOL_MAJOR:
             raise RuntimeError(
-                f"worker {engine_id!r} uses unsupported protocol major "
-                f"{response.protocol.major}"
+                f"worker {engine_id!r} uses unsupported protocol major {response.protocol.major}"
             )
         if not _protocol_compatible(response.protocol):
             raise RuntimeError(
-                f"worker {engine_id!r} uses unsupported protocol minor "
-                f"{response.protocol.minor}"
+                f"worker {engine_id!r} uses unsupported protocol minor {response.protocol.minor}"
             )
         if response.engine_id != worker.engine_id:
             raise RuntimeError(
@@ -705,7 +720,8 @@ class WorkerSupervisor:
             if watcher is not None:
                 watcher.cancel()
             self._startup_diagnostics[worker.engine_id] = {
-                "status": "restarting", "message": "worker cancellation did not drain",
+                "status": "restarting",
+                "message": "worker cancellation did not drain",
                 "restart_count": self._restart_attempts.get(key, 0),
             }
             self._capacity_changed.notify_all()
@@ -729,15 +745,19 @@ class WorkerSupervisor:
             self._capacity_changed.notify_all()
 
     @asynccontextmanager
-    async def acquire(self, model: ModelInstallation, *, wait: bool = False) -> AsyncIterator[WorkerLease]:
+    async def acquire(
+        self, model: ModelInstallation, *, wait: bool = False
+    ) -> AsyncIterator[WorkerLease]:
         """Acquire the single generation replica for a pinned model."""
         engine_id = _model_engine_id(model)
         async with self._capacity_changed:
             while wait and not self._admissible_replicas(engine_id):
                 diagnostic = self._startup_diagnostics.get(engine_id, {}).get("status")
                 healthy = self._admissible_replicas(engine_id, include_leased=True)
-                unavailable = not healthy and diagnostic != "restarting" and (
-                    not self._replicas.get(engine_id) or diagnostic == "failed"
+                unavailable = (
+                    not healthy
+                    and diagnostic != "restarting"
+                    and (not self._replicas.get(engine_id) or diagnostic == "failed")
                 )
                 if self._stopping or unavailable:
                     raise RuntimeError(f"worker {engine_id!r} is not running")
@@ -806,7 +826,9 @@ class WorkerSupervisor:
     async def _stop_registered_workers(self) -> None:
         workers = list({id(worker): worker for worker in self._replica_values()}.values())
         errors: list[BaseException] = []
-        reap_results: list[object] = [RuntimeError("Worker termination did not run") for _ in workers]
+        reap_results: list[object] = [
+            RuntimeError("Worker termination did not run") for _ in workers
+        ]
         try:
             close_results = await asyncio.gather(
                 *(worker.channel.close() for worker in workers),
@@ -816,10 +838,7 @@ class WorkerSupervisor:
         finally:
             try:
                 reap_results = await asyncio.gather(
-                    *(
-                        _terminate_owned_worker(worker)
-                        for worker in workers
-                    ),
+                    *(_terminate_owned_worker(worker) for worker in workers),
                     return_exceptions=True,
                 )
                 errors.extend(
@@ -842,7 +861,9 @@ class WorkerSupervisor:
                                 errors.append(error)
                     self._replicas.get(worker.engine_id, {}).pop(worker.replica_id, None)
                     if self._workers.get(worker.engine_id) is worker:
-                        replacement = next(iter(self._replicas.get(worker.engine_id, {}).values()), None)
+                        replacement = next(
+                            iter(self._replicas.get(worker.engine_id, {}).values()), None
+                        )
                         if replacement is None:
                             self._workers.pop(worker.engine_id, None)
                             self._replicas.pop(worker.engine_id, None)
@@ -978,9 +999,7 @@ def _finalize_owner_record(
     identity = _process_identity(pid)
     if identity is None or identity.process_group != pid:
         raise RuntimeError("Worker process identity could not be recorded")
-    temporary = owner_file.with_name(
-        f".{owner_file.name}.finalize-{uuid4().hex}.tmp"
-    )
+    temporary = owner_file.with_name(f".{owner_file.name}.finalize-{uuid4().hex}.tmp")
     try:
         _write_owner_record(
             temporary,
@@ -1052,11 +1071,7 @@ def _remove_owner_record_files(
     record: dict[str, object],
 ) -> None:
     for name in (record.get("ready"), record.get("token"), owner_file.name):
-        if (
-            isinstance(name, str)
-            and name.startswith("worker-")
-            and Path(name).name == name
-        ):
+        if isinstance(name, str) and name.startswith("worker-") and Path(name).name == name:
             _unlink_managed_run_file(layout, run_directory / name)
 
 
@@ -1066,9 +1081,7 @@ def _verified_worker_owner(pid: int, record: dict[str, object]) -> bool:
 
 
 def _command_has_owner_claim(command_line: str, owner_claim: str) -> bool:
-    claim_pattern = re.compile(
-        rf"(?:^|\s)--owner-claim(?:=|\s+){re.escape(owner_claim)}(?:\s|$)"
-    )
+    claim_pattern = re.compile(rf"(?:^|\s)--owner-claim(?:=|\s+){re.escape(owner_claim)}(?:\s|$)")
     return claim_pattern.search(command_line) is not None
 
 
@@ -1087,10 +1100,7 @@ def _pending_owner_processes(
         if process.pid == process.process_group
         and not process.state.startswith("Z")
         and _command_has_owner_claim(process.command_line, owner_claim)
-        and (
-            sys.platform == "linux"
-            or _process_has_owner_claim(process.pid, owner_claim)
-        )
+        and (sys.platform == "linux" or _process_has_owner_claim(process.pid, owner_claim))
     )
 
 
@@ -1115,7 +1125,7 @@ def _process_table() -> tuple[_ProcessIdentity, ...] | None:
             check=False,
             timeout=1.0,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
     if completed.returncode != 0:
         return None
@@ -1157,8 +1167,7 @@ def _process_group_identities(process_group: int) -> tuple[_ProcessIdentity, ...
             (
                 process
                 for process in processes
-                if process.process_group == process_group
-                and not process.state.startswith("Z")
+                if process.process_group == process_group and not process.state.startswith("Z")
             ),
             key=lambda process: process.pid,
         )
@@ -1202,16 +1211,15 @@ def _process_has_owner_claim(pid: int, owner_claim: str) -> bool:
             check=False,
             timeout=1.0,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return False
     if completed.returncode != 0:
         return False
     environment_pattern = re.compile(
         rf"(?:^|\s){re.escape(_OWNER_CLAIM_ENV)}={re.escape(owner_claim)}(?:\s|$)"
     )
-    return (
-        environment_pattern.search(completed.stdout) is not None
-        or _command_has_owner_claim(completed.stdout, owner_claim)
+    return environment_pattern.search(completed.stdout) is not None or _command_has_owner_claim(
+        completed.stdout, owner_claim
     )
 
 
@@ -1363,7 +1371,7 @@ async def _wait_for_ready_file(
             return
         except FileNotFoundError:
             pass
-        except (OSError, RuntimeError, ValueError, TypeError):
+        except OSError, RuntimeError, ValueError, TypeError:
             if ready_file.exists():
                 raise
         if process.returncode is not None:
@@ -1559,13 +1567,13 @@ async def _terminate_and_reap(
         raise RuntimeError("Worker process-group identity changed before termination")
     try:
         await asyncio.wait_for(
-            process.wait(), timeout=_FORCED_REAP_TIMEOUT_SECONDS if force else _SHUTDOWN_TIMEOUT_SECONDS
+            process.wait(),
+            timeout=_FORCED_REAP_TIMEOUT_SECONDS if force else _SHUTDOWN_TIMEOUT_SECONDS,
         )
     except TimeoutError:
         current = _verified_group_snapshot(record)
         if current is None or (
-            current.members
-            and not _signal_verified_group(record, current, signal.SIGKILL)
+            current.members and not _signal_verified_group(record, current, signal.SIGKILL)
         ):
             raise RuntimeError("Worker process-group identity changed before forced termination")
         await asyncio.wait_for(process.wait(), timeout=_FORCED_REAP_TIMEOUT_SECONDS)
@@ -1629,6 +1637,6 @@ def _read_owner_record(owner_file: Path) -> dict[str, object] | None:
         ):
             return None
         record = json.loads(owner_file.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
+    except OSError, UnicodeError, json.JSONDecodeError:
         return None
     return record if isinstance(record, dict) else None

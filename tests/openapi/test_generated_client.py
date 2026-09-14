@@ -71,7 +71,9 @@ def test_core_client_uses_the_generated_openapi_models() -> None:
     assert get_type_hints(client.CoreClient.clear_retention)["return"] is api.ClearRetentionResponse
     assert get_type_hints(client.CoreClient.runtime_status)["return"] is api.RuntimeResponse
     assert get_type_hints(client.CoreClient.service_status)["return"] is api.ServiceResponse
-    assert get_type_hints(client.CoreClient.install_service)["return"] is api.ServiceOperationResponse
+    assert (
+        get_type_hints(client.CoreClient.install_service)["return"] is api.ServiceOperationResponse
+    )
     update_types = get_type_hints(client.CoreClient.update_settings)
     assert object not in get_args(update_types["retain_audio_by_default"])
     assert client._UnsetType in get_args(update_types["retain_audio_by_default"])
@@ -93,8 +95,12 @@ def test_core_client_uses_the_generated_openapi_models() -> None:
         get_type_hints(client.CoreClient.list_generations)["return"]
         == list[api.GenerationJobResponse]
     )
-    assert get_type_hints(client.CoreClient.cancel_generation)["return"] is api.GenerationJobResponse
-    assert get_type_hints(client.CoreClient.list_history)["return"] == list[api.AudioArtifactResponse]
+    assert (
+        get_type_hints(client.CoreClient.cancel_generation)["return"] is api.GenerationJobResponse
+    )
+    assert (
+        get_type_hints(client.CoreClient.list_history)["return"] == list[api.AudioArtifactResponse]
+    )
 
 
 def test_openapi_drift_check_covers_the_python_client(tmp_path: Path) -> None:

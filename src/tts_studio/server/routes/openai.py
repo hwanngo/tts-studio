@@ -154,9 +154,7 @@ class OpenAiSpeechArtifactError(PublicApiError):
         503: {"model": ErrorEnvelope},
     },
 )
-async def create_speech(
-    payload: SpeechRequest, request: Request
-) -> Response:
+async def create_speech(payload: SpeechRequest, request: Request) -> Response:
     if payload.response_format not in {"wav", "json"}:
         raise OpenAiSpeechRequestError("Only response_format='wav' or 'json' is supported locally.")
     service: GenerationService = request.app.state.generation_service
@@ -179,7 +177,10 @@ async def create_speech(
         )
         completed = await service.wait(job.id)
         completed_state = getattr(completed, "state", GenerationState.COMPLETED)
-        if getattr(completed_state, "value", completed_state) != GenerationState.COMPLETED.value or completed.artifact_id is None:
+        if (
+            getattr(completed_state, "value", completed_state) != GenerationState.COMPLETED.value
+            or completed.artifact_id is None
+        ):
             failure = getattr(completed, "error", None) or {}
             raise OpenAiSpeechWorkerError(
                 str(failure.get("code", "worker_unavailable")),
@@ -197,13 +198,17 @@ async def create_speech(
     except WorkerOperationError as error:
         raise OpenAiSpeechWorkerError(error.code, retryable=error.retryable) from error
     except (GenerationJobNotFoundError, GenerationArtifactNotFoundError) as error:
-        raise OpenAiSpeechRequestError("Speech generation did not produce an audio artifact.") from error
+        raise OpenAiSpeechRequestError(
+            "Speech generation did not produce an audio artifact."
+        ) from error
 
     if payload.response_format == "wav":
         try:
             handle = await _open_artifact_for_streaming(service, artifact_id)
         except GenerationArtifactNotFoundError as error:
-            raise OpenAiSpeechRequestError("Speech generation did not produce an audio artifact.") from error
+            raise OpenAiSpeechRequestError(
+                "Speech generation did not produce an audio artifact."
+            ) from error
         return _ArtifactStreamingResponse(
             handle,
             media_type="audio/wav",
@@ -214,7 +219,9 @@ async def create_speech(
         await service.request_alignment(job.id, request.state.correlation_id)
         alignment = await _wait_for_alignment(service, job.id)
     except GenerationArtifactNotFoundError as error:
-        raise OpenAiSpeechArtifactError("artifact_not_found", status_code=HTTPStatus.NOT_FOUND) from error
+        raise OpenAiSpeechArtifactError(
+            "artifact_not_found", status_code=HTTPStatus.NOT_FOUND
+        ) from error
     except GenerationArtifactInvalidError as error:
         raise OpenAiSpeechArtifactError("artifact_invalid") from error
     except GenerationCapabilityError as error:
@@ -236,7 +243,9 @@ async def create_speech(
     try:
         audio = await _read_bounded_artifact(service, artifact_id)
     except GenerationArtifactNotFoundError as error:
-        raise OpenAiSpeechArtifactError("artifact_not_found", status_code=HTTPStatus.NOT_FOUND) from error
+        raise OpenAiSpeechArtifactError(
+            "artifact_not_found", status_code=HTTPStatus.NOT_FOUND
+        ) from error
     except GenerationArtifactInvalidError as error:
         raise OpenAiSpeechArtifactError("artifact_invalid") from error
     except OSError as error:

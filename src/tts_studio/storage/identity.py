@@ -48,6 +48,4 @@ def unlink_open_file(
         raise IdentityBoundUnlinkMismatchError(
             "the managed entry changed before deletion completed"
         ) from cause
-    raise IdentityBoundUnlinkError(
-        "the validated managed entry could not be removed"
-    ) from cause
+    raise IdentityBoundUnlinkError("the validated managed entry could not be removed") from cause

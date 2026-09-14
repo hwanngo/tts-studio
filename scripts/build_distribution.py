@@ -47,9 +47,7 @@ def build_distribution(
     openai_worker = _resolve_repository_path(root, _OPENAI_WORKER_RELATIVE)
     vieneu_worker = _resolve_repository_path(root, _VIENEU_WORKER_RELATIVE)
     fake_worker = (
-        _resolve_repository_path(root, _FAKE_WORKER_RELATIVE)
-        if include_test_adapters
-        else None
+        _resolve_repository_path(root, _FAKE_WORKER_RELATIVE) if include_test_adapters else None
     )
 
     subprocess.run(

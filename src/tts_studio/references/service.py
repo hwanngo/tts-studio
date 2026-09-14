@@ -136,24 +136,24 @@ class ReferenceService:
             raise CleanupFailedError("reference source was not validated")
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         metadata = os.fstat(descriptor)
-        if (
-            (metadata.st_dev, metadata.st_ino, metadata.st_ctime_ns) != expected
-            or not stat.S_ISREG(metadata.st_mode)
+        if (metadata.st_dev, metadata.st_ino, metadata.st_ctime_ns) != expected or not stat.S_ISREG(
+            metadata.st_mode
         ):
             os.close(descriptor)
             raise CleanupFailedError("reference path identity changed")
         return descriptor
 
     def mark_validated(
-        self, reference_id: str, metadata: ReferenceMetadata | engine_pb2.ReferenceMetadata,
-        *, now: str | None = None
+        self,
+        reference_id: str,
+        metadata: ReferenceMetadata | engine_pb2.ReferenceMetadata,
+        *,
+        now: str | None = None,
     ) -> ReferenceRecording:
         normalized = _metadata(metadata)
         return self._registry.mark_validated(reference_id, normalized, now=now)
 
-    def claim_for_generation(
-        self, reference_id: str, *, now: str | None = None
-    ) -> ReferenceHandle:
+    def claim_for_generation(self, reference_id: str, *, now: str | None = None) -> ReferenceHandle:
         recording = self._registry.claim_for_generation(reference_id, now=now)
         transcript = self._transcripts.get(reference_id)
         if recording.transcript_present and transcript is None:
@@ -207,7 +207,7 @@ class ReferenceService:
         try:
             directory = self._layout.reference_staging
             entries = tuple(directory.iterdir())
-        except (OSError, UnsafeStoragePathError):
+        except OSError, UnsafeStoragePathError:
             return recovered
         for entry in entries:
             if entry.name not in {recording.id for recording in self._registry.list_all()}:
@@ -226,7 +226,7 @@ class ReferenceService:
         except ReferenceRecordNotFoundError:
             self._transcripts.pop(recording.id, None)
             self._saved_voice_identities.pop(recording.id, None)
-        except (CleanupFailedError, OSError, UnsafeStoragePathError):
+        except CleanupFailedError, OSError, UnsafeStoragePathError:
             self._registry.mark_cleanup_failed(recording.id)
             raise CleanupFailedError(f"could not safely clean reference {recording.id!r}")
         else:

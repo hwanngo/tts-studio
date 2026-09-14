@@ -47,16 +47,30 @@ def test_registry_persists_metadata_without_transcript_or_bytes(tmp_path: Path) 
     with registry._database.read() as connection:
         row = connection.execute("SELECT * FROM reference_recordings").fetchone()
     assert set(row.keys()) == {
-        "id", "model_id", "relative_path", "byte_size", "sha256", "container",
-        "sample_rate_hz", "channels", "duration_ms", "transcript_present", "state",
-        "expires_at", "created_at", "updated_at",
+        "id",
+        "model_id",
+        "relative_path",
+        "byte_size",
+        "sha256",
+        "container",
+        "sample_rate_hz",
+        "channels",
+        "duration_ms",
+        "transcript_present",
+        "state",
+        "expires_at",
+        "created_at",
+        "updated_at",
     }
     assert all("transcript" not in str(value) for value in row)
 
 
 def test_registry_expires_only_due_uploads_and_deletes_terminal_metadata(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    for identifier, expires_at in (("due", "2026-09-07T00:00:00+00:00"), ("later", "2026-09-07T02:00:00+00:00")):
+    for identifier, expires_at in (
+        ("due", "2026-09-07T00:00:00+00:00"),
+        ("later", "2026-09-07T02:00:00+00:00"),
+    ):
         registry.create_uploaded(
             reference_id=identifier,
             model_id="model",

@@ -84,7 +84,11 @@ def _activate_model(registry: ModelRegistry) -> ModelInstallation:
 
 
 @pytest.fixture
-async def integration_context(tmp_path: Path) -> AsyncIterator[tuple[GenerationService, GenerationRegistry, StorageLayout, EventStore, WorkerSupervisor]]:
+async def integration_context(
+    tmp_path: Path,
+) -> AsyncIterator[
+    tuple[GenerationService, GenerationRegistry, StorageLayout, EventStore, WorkerSupervisor]
+]:
     layout = StorageLayout.from_root(tmp_path / "data")
     layout.ensure()
     database = Database(layout.database_path)
@@ -112,13 +116,20 @@ async def integration_context(tmp_path: Path) -> AsyncIterator[tuple[GenerationS
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["cancel", "retry"])
 async def test_stuck_native_inference_is_contained_before_cancellation_or_retry(
-    integration_context, mode: str,
+    integration_context,
+    mode: str,
 ) -> None:
     service, _registry, layout, _events, supervisor = integration_context
     await supervisor.stop_all()
     launch = WorkerLaunchSpec(
-        command=("uv", "run", "--project", "workers/fake", "python",
-                 "tests/fixtures/stuck_synthesis_worker.py"),
+        command=(
+            "uv",
+            "run",
+            "--project",
+            "workers/fake",
+            "python",
+            "tests/fixtures/stuck_synthesis_worker.py",
+        ),
         cwd=_REPOSITORY_ROOT,
     )
     worker = await supervisor.start("fake", launch)
@@ -148,7 +159,8 @@ async def test_stuck_native_inference_is_contained_before_cancellation_or_retry(
 
 @pytest.mark.asyncio
 async def test_ready_replicas_generate_concurrently_and_queue_excess_work(
-    integration_context, monkeypatch: pytest.MonkeyPatch,
+    integration_context,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service, _registry, layout, _events, supervisor = integration_context
     model = ModelRegistry(Database(layout.database_path)).get_model("fixtures/compatible")
@@ -191,7 +203,9 @@ async def test_ready_replicas_generate_concurrently_and_queue_excess_work(
 
 @pytest.mark.asyncio
 async def test_real_authenticated_fake_worker_publishes_valid_wav_and_replays_events(
-    integration_context: tuple[GenerationService, GenerationRegistry, StorageLayout, EventStore, WorkerSupervisor],
+    integration_context: tuple[
+        GenerationService, GenerationRegistry, StorageLayout, EventStore, WorkerSupervisor
+    ],
 ) -> None:
     service, registry, _layout, events, _ = integration_context
 
@@ -218,7 +232,9 @@ async def test_real_authenticated_fake_worker_publishes_valid_wav_and_replays_ev
 
 @pytest.mark.asyncio
 async def test_real_authenticated_fake_reference_generation_finalizes_wav_and_cleans_on_cancellation(
-    integration_context: tuple[GenerationService, GenerationRegistry, StorageLayout, EventStore, WorkerSupervisor],
+    integration_context: tuple[
+        GenerationService, GenerationRegistry, StorageLayout, EventStore, WorkerSupervisor
+    ],
 ) -> None:
     original_service, registry, layout, events, supervisor = integration_context
     references = ReferenceService(Database(layout.database_path), layout)
@@ -286,12 +302,16 @@ async def test_real_authenticated_fake_reference_generation_finalizes_wav_and_cl
         references.get(recording.id)
     with pytest.raises(ReferenceRecordNotFoundError):
         references.get(cancelled_recording.id)
-    event_json = "\n".join(json.dumps(event.payload, sort_keys=True) for event in events.read_after(0).events)
+    event_json = "\n".join(
+        json.dumps(event.payload, sort_keys=True) for event in events.read_after(0).events
+    )
     assert "contract reference transcript" not in event_json
     assert "cancel reference transcript" not in event_json
     assert str(layout.root) not in event_json
     with sqlite3.connect(layout.database_path) as connection:
-        values = connection.execute("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view')").fetchall()
+        values = connection.execute(
+            "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view')"
+        ).fetchall()
         for table, _ in values:
             rows = connection.execute(f'SELECT * FROM "{table}"').fetchall()
             serialized = repr(rows)
@@ -324,7 +344,9 @@ def _reference_wav_bytes() -> bytes:
 
 @pytest.mark.asyncio
 async def test_real_worker_cancellation_leaves_no_partial_audio_and_serializes_replica(
-    integration_context: tuple[GenerationService, GenerationRegistry, StorageLayout, EventStore, WorkerSupervisor],
+    integration_context: tuple[
+        GenerationService, GenerationRegistry, StorageLayout, EventStore, WorkerSupervisor
+    ],
 ) -> None:
     service, registry, layout, _, _ = integration_context
 
@@ -351,11 +373,22 @@ async def test_real_worker_cancellation_leaves_no_partial_audio_and_serializes_r
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", [GenerationState.QUEUED, GenerationState.LOADING, GenerationState.GENERATING, GenerationState.FINALIZING])
+@pytest.mark.parametrize(
+    "state",
+    [
+        GenerationState.QUEUED,
+        GenerationState.LOADING,
+        GenerationState.GENERATING,
+        GenerationState.FINALIZING,
+    ],
+)
 @pytest.mark.parametrize("operation", ["remove", "replace"])
 async def test_model_removal_refuses_an_installation_pinned_by_a_queued_generation(
-    integration_context: tuple[GenerationService, GenerationRegistry, StorageLayout, EventStore, WorkerSupervisor],
-    state: GenerationState, operation: str,
+    integration_context: tuple[
+        GenerationService, GenerationRegistry, StorageLayout, EventStore, WorkerSupervisor
+    ],
+    state: GenerationState,
+    operation: str,
 ) -> None:
     _service, registry, layout, _, supervisor = integration_context
     job = registry.create_job(
@@ -370,7 +403,11 @@ async def test_model_removal_refuses_an_installation_pinned_by_a_queued_generati
     (layout.root / model.cache_path).mkdir()
     async with supervisor.acquire(model) as lease:
         await lease.load_model(model)
-    for next_state in [GenerationState.LOADING, GenerationState.GENERATING, GenerationState.FINALIZING]:
+    for next_state in [
+        GenerationState.LOADING,
+        GenerationState.GENERATING,
+        GenerationState.FINALIZING,
+    ]:
         if registry.get_job(job.id).state is state:
             break
         registry.transition_job(job.id, next_state)
@@ -386,7 +423,9 @@ async def test_model_removal_refuses_an_installation_pinned_by_a_queued_generati
         with pytest.raises(ModelInUseError):
             await model_service.remove_model(job.model_id)
     else:
-        download = await model_service.start_download(model.repository_id, correlation_id="pinned-replace")
+        download = await model_service.start_download(
+            model.repository_id, correlation_id="pinned-replace"
+        )
         assert (await model_service.wait_for_download(download.id)).state is DownloadState.FAILED
         assert model_service.get_download(download.id).error["code"] == "model_in_use"
     assert registry.get_job(job.id).state is state
@@ -396,14 +435,19 @@ async def test_model_removal_refuses_an_installation_pinned_by_a_queued_generati
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["remove", "replace"])
-async def test_model_retirement_unloads_the_authenticated_worker(integration_context, operation: str) -> None:
+async def test_model_retirement_unloads_the_authenticated_worker(
+    integration_context, operation: str
+) -> None:
     _, registry, layout, _, supervisor = integration_context
     models = ModelRegistry(Database(layout.database_path))
     model = models.get_model("fixtures/compatible")
     (layout.root / model.cache_path).mkdir()
     service = ModelService(
-        models, supervisor, (AdapterDescriptor("fake", 0, _FAKE_WORKER_LAUNCH),),
-        layout=layout, generation_registry=registry,
+        models,
+        supervisor,
+        (AdapterDescriptor("fake", 0, _FAKE_WORKER_LAUNCH),),
+        layout=layout,
+        generation_registry=registry,
     )
     async with supervisor.acquire(model) as lease:
         await lease.load_model(model)
@@ -413,7 +457,9 @@ async def test_model_retirement_unloads_the_authenticated_worker(integration_con
         await service.remove_model(model.id)
     else:
         download = await service.start_download(
-            model.repository_id, variant="fp32", correlation_id="replace-loaded",
+            model.repository_id,
+            variant="fp32",
+            correlation_id="replace-loaded",
         )
         assert (await service.wait_for_download(download.id)).state is DownloadState.COMPLETED
 

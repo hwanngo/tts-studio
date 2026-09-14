@@ -273,7 +273,7 @@ class ModelService:
                     descriptor.engine_id,
                     request,
                 )
-            except (grpc.aio.AioRpcError, RuntimeError, TimeoutError):
+            except grpc.aio.AioRpcError, RuntimeError, TimeoutError:
                 results.append(_unavailable_result(descriptor.engine_id))
                 continue
             responded = True
@@ -509,7 +509,11 @@ class ModelService:
         for job in self._generation_registry.list_jobs():
             if job.model_id != model_id:
                 continue
-            if job.state not in {GenerationState.COMPLETED, GenerationState.CANCELLED, GenerationState.FAILED}:
+            if job.state not in {
+                GenerationState.COMPLETED,
+                GenerationState.CANCELLED,
+                GenerationState.FAILED,
+            }:
                 return True
             try:
                 alignment = self._generation_registry.get_alignment(job.id)
@@ -537,9 +541,7 @@ class ModelService:
         activated: ActivatedModelDirectory | None = None
         try:
             self._raise_if_cancelled(job.id)
-            self._transition_download(
-                job.id, DownloadState.VALIDATING, phase="validating"
-            )
+            self._transition_download(job.id, DownloadState.VALIDATING, phase="validating")
             if not selected.compatible or selected.resolved_commit is None:
                 raise ModelIncompatibleError
             if variant not in {item.id for item in selected.available_variants}:
@@ -547,9 +549,7 @@ class ModelService:
             self._raise_if_cancelled(job.id)
 
             staging = activation.allocate_staging(job.id)
-            self._transition_download(
-                job.id, DownloadState.DOWNLOADING, phase="downloading"
-            )
+            self._transition_download(job.id, DownloadState.DOWNLOADING, phase="downloading")
             manifest: engine_pb2.ModelManifest | None = None
             sequence = 0
             request = engine_pb2.DownloadModelRequest(
@@ -558,9 +558,7 @@ class ModelService:
                 variant=variant,
                 staging_destination=job.id,
             )
-            async for event in self._validation_client.download_model(
-                selected.engine_id, request
-            ):
+            async for event in self._validation_client.download_model(selected.engine_id, request):
                 self._raise_if_cancelled(job.id)
                 payload = event.WhichOneof("payload")
                 if payload == "error":
@@ -634,9 +632,7 @@ class ModelService:
                     installed_bytes=sum(model.byte_size for model in installed_models),
                     replacing_bytes=previous.byte_size if previous is not None else 0,
                 )
-                self._transition_download(
-                    job.id, DownloadState.ACTIVATING, phase="activating"
-                )
+                self._transition_download(job.id, DownloadState.ACTIVATING, phase="activating")
                 if previous is not None:
                     if _model_is_in_use(previous) or self._generation_model_is_in_use(previous.id):
                         raise ModelInUseError
@@ -722,7 +718,7 @@ class ModelService:
                 message="The engine adapter could not download the model.",
                 retryable=error.retryable,
             )
-        except (ModelIncompatibleError, ModelVariantUnavailableError):
+        except ModelIncompatibleError, ModelVariantUnavailableError:
             self._fail_job(
                 job.id,
                 code="model_incompatible",

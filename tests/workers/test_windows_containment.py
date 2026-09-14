@@ -24,7 +24,12 @@ async def test_worker_cannot_execute_before_job_assignment(tmp_path: Path, assig
         def close(self):
             pass
 
-    command = (sys.executable, "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()", str(marker))
+    command = (
+        sys.executable,
+        "-c",
+        "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()",
+        str(marker),
+    )
     if assignment_fails:
         with pytest.raises(OSError, match="assignment denied"):
             await windows_job.launch_in_job(command, job_factory=Job)
@@ -55,7 +60,9 @@ async def test_job_termination_keeps_handle_until_all_descendants_exit():
             self.closed = True
 
     job = Job()
-    process = await windows_job.launch_in_job((sys.executable, "-c", "pass"), job_factory=lambda: job)
+    process = await windows_job.launch_in_job(
+        (sys.executable, "-c", "pass"), job_factory=lambda: job
+    )
     await asyncio.wait_for(process.wait(), 5)
     with pytest.raises(TimeoutError):
         await windows_job.terminate_job_process(process, timeout=0.02)
@@ -72,10 +79,13 @@ async def test_job_termination_keeps_handle_until_all_descendants_exit():
 async def test_native_job_terminates_worker_and_descendant(tmp_path: Path):
     marker = tmp_path / "descendant.pid"
     command = (
-        sys.executable, "-c",
-        ("import subprocess,sys,time,pathlib; "
-        "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
-        "pathlib.Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(60)"),
+        sys.executable,
+        "-c",
+        (
+            "import subprocess,sys,time,pathlib; "
+            "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+            "pathlib.Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(60)"
+        ),
         str(marker),
     )
     process = await windows_job.launch_in_job(command)

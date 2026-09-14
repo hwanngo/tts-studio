@@ -119,7 +119,9 @@ class StorageLayout:
         try:
             descriptor = os.open(references, flags)
         except OSError as error:
-            raise UnsafeStoragePathError("reference staging directory cannot be opened safely") from error
+            raise UnsafeStoragePathError(
+                "reference staging directory cannot be opened safely"
+            ) from error
         opened = os.fstat(descriptor)
         if (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino):
             os.close(descriptor)
@@ -200,11 +202,17 @@ class StorageLayout:
         except OSError as error:
             if error.errno not in _UNSAFE_PATH_ERRNOS:
                 raise
-            raise UnsafeStoragePathError("reference staging directory is redirected or missing") from error
+            raise UnsafeStoragePathError(
+                "reference staging directory is redirected or missing"
+            ) from error
         except ValueError as error:
-            raise UnsafeStoragePathError("reference staging directory is redirected or missing") from error
+            raise UnsafeStoragePathError(
+                "reference staging directory is redirected or missing"
+            ) from error
         if not S_ISDIR(metadata.st_mode) or resolved != references:
-            raise UnsafeStoragePathError("reference staging directory is redirected or not a directory")
+            raise UnsafeStoragePathError(
+                "reference staging directory is redirected or not a directory"
+            )
         _tighten_directory(references)
         return references
 

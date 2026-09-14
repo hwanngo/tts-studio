@@ -73,22 +73,26 @@ def _wait_for_json(url: str, server: subprocess.Popen[str]) -> tuple[int, dict[s
 
 
 def test_installed_wheel_serves_web_ui_and_api(tmp_path: Path) -> None:
-    distribution_dir = tmp_path / "dist"
+    provided_dist = os.environ.get("TTS_STUDIO_TEST_DIST_DIR")
+    distribution_dir = (
+        Path(provided_dist).resolve(strict=True) if provided_dist else tmp_path / "dist"
+    )
     environment = tmp_path / "installed"
     worker_environment = tmp_path / "worker-installed"
     data_dir = tmp_path / "data"
 
-    subprocess.run(
-        [
-            sys.executable,
-            str(_BUILD_SCRIPT),
-            "--include-test-adapters",
-            "--out-dir",
-            str(distribution_dir),
-        ],
-        cwd=_REPOSITORY_ROOT,
-        check=True,
-    )
+    if not provided_dist:
+        subprocess.run(
+            [
+                sys.executable,
+                str(_BUILD_SCRIPT),
+                "--include-test-adapters",
+                "--out-dir",
+                str(distribution_dir),
+            ],
+            cwd=_REPOSITORY_ROOT,
+            check=True,
+        )
     root_wheels = tuple(distribution_dir.glob("tts_studio-*.whl"))
     protocol_wheels = tuple(distribution_dir.glob("tts_studio_protocol-*.whl"))
     worker_sdk_wheels = tuple(distribution_dir.glob("tts_studio_worker_sdk-*.whl"))
@@ -333,9 +337,7 @@ def test_installed_wheel_serves_web_ui_and_api(tmp_path: Path) -> None:
         env=isolated_environment,
     )
     try:
-        system_status, system = _wait_for_json(
-            f"http://127.0.0.1:{port}/api/v1/system", server
-        )
+        system_status, system = _wait_for_json(f"http://127.0.0.1:{port}/api/v1/system", server)
         with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:
             page_status = response.status
             page = response.read().decode("utf-8")

@@ -28,7 +28,15 @@ def test_upgrade_redacts_only_nonretained_terminal_generation_text(tmp_path: Pat
     layout = _layout(tmp_path)
     with sqlite3.connect(layout.database_path) as connection:
         _apply_schema(connection, 12)
-        for state in ("queued", "loading", "generating", "finalizing", "completed", "failed", "cancelled"):
+        for state in (
+            "queued",
+            "loading",
+            "generating",
+            "finalizing",
+            "completed",
+            "failed",
+            "cancelled",
+        ):
             for retain in (0, 1):
                 connection.execute(
                     "INSERT INTO generation_jobs (id, model_id, engine_id, voice_id, text, retain_artifact, state, correlation_id, created_at, updated_at) VALUES (?, 'model', 'engine', 'voice', 'private text', ?, ?, 'correlation', 'now', 'now')",
@@ -36,9 +44,15 @@ def test_upgrade_redacts_only_nonretained_terminal_generation_text(tmp_path: Pat
                 )
     Database(layout.database_path).migrate()
     with sqlite3.connect(layout.database_path) as connection:
-        rows = connection.execute("SELECT text, retain_artifact, state FROM generation_jobs").fetchall()
+        rows = connection.execute(
+            "SELECT text, retain_artifact, state FROM generation_jobs"
+        ).fetchall()
         for text, retain, state in rows:
-            assert text == ("" if not retain and state in {"completed", "failed", "cancelled"} else "private text")
+            assert text == (
+                ""
+                if not retain and state in {"completed", "failed", "cancelled"}
+                else "private text"
+            )
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -289,9 +303,7 @@ def test_corrupt_newest_migration_rolls_back_without_losing_schema_v10_data(
         assert connection.execute(
             "SELECT id, state, text FROM generation_jobs WHERE id = 'queued-job'"
         ).fetchone() == ("queued-job", "queued", "preserved text")
-        columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(generation_jobs)")
-        }
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(generation_jobs)")}
         assert {"speed", "pitch", "volume"}.isdisjoint(columns)
 
 
@@ -329,7 +341,9 @@ def test_migration_012_directly_creates_alignment_schema_from_version_11(tmp_pat
     with sqlite3.connect(layout.database_path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 13
-        assert [row[1] for row in connection.execute("PRAGMA table_info(generation_alignments)")] == [
+        assert [
+            row[1] for row in connection.execute("PRAGMA table_info(generation_alignments)")
+        ] == [
             "job_id",
             "artifact_id",
             "state",
@@ -404,13 +418,19 @@ def test_migration_012_directly_creates_alignment_schema_from_version_11(tmp_pat
             "VALUES ('job-artifact-cascade', 'artifact-cascade', 'queued', 'now', 'now')"
         )
         connection.execute("DELETE FROM audio_artifacts WHERE id = 'artifact-cascade'")
-        assert connection.execute(
-            "SELECT COUNT(*) FROM generation_alignments WHERE job_id = 'job-artifact-cascade'"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM generation_alignments WHERE job_id = 'job-artifact-cascade'"
+            ).fetchone()[0]
+            == 0
+        )
         connection.execute("DELETE FROM generation_jobs WHERE id = 'job'")
-        assert connection.execute(
-            "SELECT COUNT(*) FROM generation_alignments WHERE job_id = 'job'"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM generation_alignments WHERE job_id = 'job'"
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_database_connection_boundary_enforces_foreign_keys(tmp_path: Path) -> None:

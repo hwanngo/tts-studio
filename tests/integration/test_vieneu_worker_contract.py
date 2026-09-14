@@ -220,7 +220,9 @@ asyncio.run(main())
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env={key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "MYPYPATH"}},
+        env={
+            key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "MYPYPATH"}
+        },
     )
     assert process.stdout is not None
     line = await asyncio.to_thread(process.stdout.readline)
@@ -238,7 +240,7 @@ asyncio.run(main())
 
 
 def _core_worker_script() -> str:
-    return r'''
+    return r"""
 import argparse, asyncio, os
 from pathlib import Path
 from types import SimpleNamespace
@@ -301,7 +303,7 @@ async def main():
     await serve_worker(VieNeuEngineWorker(token, args.data_dir, repository=Repository(), vieneu_factory=factory), args.host, args.port, token, args.ready_file)
 
 asyncio.run(main())
-'''
+"""
 
 
 async def _wait_for_generation_state(service: Any, job_id: str, expected: str) -> None:
@@ -311,7 +313,9 @@ async def _wait_for_generation_state(service: Any, job_id: str, expected: str) -
             if state == expected:
                 return
             if state in {"completed", "cancelled", "failed"}:
-                raise AssertionError(f"generation reached terminal state {state!r} before {expected!r}")
+                raise AssertionError(
+                    f"generation reached terminal state {state!r} before {expected!r}"
+                )
             await asyncio.sleep(0.005)
 
     await asyncio.wait_for(wait(), timeout=5)
@@ -326,26 +330,44 @@ async def test_public_vieneu_voice_listing_then_generation_uses_real_worker_life
     _activate_contract_model(layout_root)
     supervisor = WorkerSupervisor(StorageLayout.from_root(layout_root), startup_timeout=10)
     launch = WorkerLaunchSpec(
-        command=("uv", "run", "--frozen", "--project", "workers/vieneu", "python", "-c", _core_worker_script()),
+        command=(
+            "uv",
+            "run",
+            "--frozen",
+            "--project",
+            "workers/vieneu",
+            "python",
+            "-c",
+            _core_worker_script(),
+        ),
         cwd=_REPOSITORY_ROOT,
     )
     await supervisor.start("vieneu", launch)
     adapter = AdapterDescriptor(engine_id="vieneu", priority=1, launch=launch)
     app = create_app(Settings.resolve(layout_root), supervisor=supervisor, adapters=(adapter,))
     try:
-        async with app.router.lifespan_context(app), AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with (
+            app.router.lifespan_context(app),
+            AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+        ):
             voices = await client.get("/api/v1/voices", params={"model_id": MODEL_ID})
             assert voices.status_code == 200
             assert voices.json() == [
-                {"id": "core-contract-voice", "label": "Core Contract Voice", "capabilities": ["preset"]}
+                {
+                    "id": "core-contract-voice",
+                    "label": "Core Contract Voice",
+                    "capabilities": ["preset"],
+                }
             ]
             assert "reference_cloning" in supervisor._workers["vieneu"].capabilities.supported
 
             generated = await client.post(
                 "/api/v1/generations",
-                json={"model_id": MODEL_ID, "voice_id": "core-contract-voice", "text": "contract text"},
+                json={
+                    "model_id": MODEL_ID,
+                    "voice_id": "core-contract-voice",
+                    "text": "contract text",
+                },
             )
             assert generated.status_code == 202, generated.text
             completed = await app.state.generation_service.wait(generated.json()["id"])
@@ -371,19 +393,32 @@ async def test_core_acquisition_activation_voices_generation_and_privacy(
     monkeypatch.setenv("TTS_STUDIO_CONTRACT_SECRET_SENTINEL", secret)
     supervisor = WorkerSupervisor(StorageLayout.from_root(layout_root), startup_timeout=10)
     launch = WorkerLaunchSpec(
-        command=("uv", "run", "--frozen", "--project", "workers/vieneu", "python", "-c", _core_worker_script()),
+        command=(
+            "uv",
+            "run",
+            "--frozen",
+            "--project",
+            "workers/vieneu",
+            "python",
+            "-c",
+            _core_worker_script(),
+        ),
         cwd=_REPOSITORY_ROOT,
     )
     adapter = AdapterDescriptor(engine_id="vieneu", priority=1, launch=launch)
     await supervisor.start("vieneu", launch)
     app = create_app(Settings.resolve(layout_root), supervisor=supervisor, adapters=(adapter,))
     try:
-        async with app.router.lifespan_context(app), AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with (
+            app.router.lifespan_context(app),
+            AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+        ):
             validation = await client.post(
                 "/api/v1/models/validate",
-                json={"repository_id": "pnnbao-ump/VieNeu-TTS-v3-Turbo", "requested_revision": MODEL_COMMIT},
+                json={
+                    "repository_id": "pnnbao-ump/VieNeu-TTS-v3-Turbo",
+                    "requested_revision": MODEL_COMMIT,
+                },
             )
             assert validation.status_code == 200
             assert validation.json()["compatible"] is True
@@ -391,7 +426,11 @@ async def test_core_acquisition_activation_voices_generation_and_privacy(
 
             queued = await client.post(
                 "/api/v1/downloads",
-                json={"repository_id": "pnnbao-ump/VieNeu-TTS-v3-Turbo", "requested_revision": MODEL_COMMIT, "variant": "fp32"},
+                json={
+                    "repository_id": "pnnbao-ump/VieNeu-TTS-v3-Turbo",
+                    "requested_revision": MODEL_COMMIT,
+                    "variant": "fp32",
+                },
             )
             assert queued.status_code == 202
             completed = await app.state.model_service.wait_for_download(queued.json()["id"])
@@ -403,27 +442,54 @@ async def test_core_acquisition_activation_voices_generation_and_privacy(
 
             voices = await client.get(f"/api/v1/voices?model_id={model_id}")
             assert voices.status_code == 200
-            assert voices.json() == [{"id": "core-contract-voice", "label": "Core Contract Voice", "capabilities": ["preset"]}]
+            assert voices.json() == [
+                {
+                    "id": "core-contract-voice",
+                    "label": "Core Contract Voice",
+                    "capabilities": ["preset"],
+                }
+            ]
             generated = await client.post(
                 "/api/v1/generations",
-                json={"model_id": model_id, "voice_id": "core-contract-voice", "text": "contract text"},
+                json={
+                    "model_id": model_id,
+                    "voice_id": "core-contract-voice",
+                    "text": "contract text",
+                },
             )
-            assert generated.status_code == 202, generated.text + "\\n" + "\\n".join(
-                path.read_text(encoding="utf-8") for path in (layout_root / "logs").glob("*.log")
+            assert generated.status_code == 202, (
+                generated.text
+                + "\\n"
+                + "\\n".join(
+                    path.read_text(encoding="utf-8")
+                    for path in (layout_root / "logs").glob("*.log")
+                )
             )
             job = await app.state.generation_service.wait(generated.json()["id"])
             assert job.state.value == "completed", job.error
             artifact = app.state.generation_service.list_history()[0]
-            with wave.open(str(app.state.generation_service.read_artifact(artifact.id)), "rb") as wav:
-                assert (wav.getframerate(), wav.getnchannels(), wav.getsampwidth()) == (48_000, 1, 2)
+            with wave.open(
+                str(app.state.generation_service.read_artifact(artifact.id)), "rb"
+            ) as wav:
+                assert (wav.getframerate(), wav.getnchannels(), wav.getsampwidth()) == (
+                    48_000,
+                    1,
+                    2,
+                )
 
             cancelled_response = await client.post(
                 "/api/v1/generations",
-                json={"model_id": model_id, "voice_id": "core-contract-voice", "text": "cancel " * 1000},
+                json={
+                    "model_id": model_id,
+                    "voice_id": "core-contract-voice",
+                    "text": "cancel " * 1000,
+                },
             )
             assert cancelled_response.status_code == 202, cancelled_response.text
             cancelled_id = cancelled_response.json()["id"]
-            await _wait_for_generation_state(app.state.generation_service, cancelled_id, "generating")
+            await _wait_for_generation_state(
+                app.state.generation_service, cancelled_id, "generating"
+            )
             await app.state.generation_service.cancel(cancelled_id)
             cancelled = await app.state.generation_service.wait(cancelled_id)
             assert cancelled.state.value == "cancelled"
@@ -466,7 +532,9 @@ async def test_core_acquisition_activation_voices_generation_and_privacy(
                 }
             )
             with sqlite3.connect(layout_root / "database" / "tts-studio.sqlite3") as connection:
-                rows = connection.execute("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view')").fetchall()
+                rows = connection.execute(
+                    "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view')"
+                ).fetchall()
                 database_values: list[str] = []
                 for name, _ in rows:
                     values = repr(connection.execute(f'SELECT * FROM "{name}"').fetchall())
@@ -475,7 +543,9 @@ async def test_core_acquisition_activation_voices_generation_and_privacy(
             durable_events = json.dumps(
                 [event.public_data() for event in app.state.event_store.read_after(0).events]
             )
-            logs = "\n".join(path.read_text(encoding="utf-8") for path in (layout_root / "logs").glob("*.log"))
+            logs = "\n".join(
+                path.read_text(encoding="utf-8") for path in (layout_root / "logs").glob("*.log")
+            )
             for sentinel in (secret, url, absolute_path, traceback_text):
                 assert sentinel not in database_dump
                 assert sentinel not in durable_events
@@ -506,16 +576,16 @@ async def test_authenticated_vieneu_contract_and_core_wav_path(tmp_path: Path) -
             metadata=metadata,
         )
         assert loaded.loaded
-        loaded_description = await stub.Describe(
-            engine_pb2.DescribeRequest(), metadata=metadata
-        )
+        loaded_description = await stub.Describe(engine_pb2.DescribeRequest(), metadata=metadata)
         assert "reference_cloning" in {
             item.name for item in loaded_description.capabilities if item.supported
         }
         voices = await stub.ListVoices(
             engine_pb2.ListVoicesRequest(model_id=MODEL_ID), metadata=metadata
         )
-        assert [(voice.label, voice.id) for voice in voices.voices] == [("Contract Voice", "contract-voice")]
+        assert [(voice.label, voice.id) for voice in voices.voices] == [
+            ("Contract Voice", "contract-voice")
+        ]
         events = [
             event
             async for event in stub.Synthesize(

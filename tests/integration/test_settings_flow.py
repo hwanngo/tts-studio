@@ -16,10 +16,12 @@ from tts_studio.workers.process import WorkerLaunchSpec
 from tts_studio.workers.supervisor import WorkerSupervisor
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
 def _identity_bound_unlink_available() -> bool:
     try:
         _ = ctypes.CDLL(None).funlinkat
-    except (AttributeError, OSError):
+    except AttributeError, OSError:
         return False
     return True
 
@@ -66,7 +68,9 @@ async def test_settings_public_flow_persists_limits_cleans_artifact_and_reports_
 
     try:
         async with app.router.lifespan_context(app):  # noqa: SIM117
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
                 defaults = await client.get("/api/v1/settings")
                 assert defaults.status_code == 200
                 assert defaults.json()["retain_audio_by_default"] is True
@@ -88,7 +92,9 @@ async def test_settings_public_flow_persists_limits_cleans_artifact_and_reports_
                 assert patched.json()["restart_required"] is False
                 assert patched.json()["api_token_env"] is None
 
-                recreated = create_app(Settings.resolve(tmp_path / "fresh-data"), supervisor=supervisor)
+                recreated = create_app(
+                    Settings.resolve(tmp_path / "fresh-data"), supervisor=supervisor
+                )
                 async with AsyncClient(
                     transport=ASGITransport(app=recreated), base_url="http://test"
                 ) as recreated_client:

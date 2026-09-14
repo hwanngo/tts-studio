@@ -29,7 +29,7 @@ runner = CliRunner()
 def _identity_bound_unlink_available() -> bool:
     try:
         _ = ctypes.CDLL(None).funlinkat
-    except (AttributeError, OSError):
+    except AttributeError, OSError:
         return False
     return True
 
@@ -38,16 +38,17 @@ def _identity_bound_unlink_available() -> bool:
 def core_url(tmp_path: Path) -> Iterator[str]:
     if sys.platform == "win32":
         pytest.skip("threaded Uvicorn Core fixtures cannot start Worker adapters on Windows CI")
-    core = create_app(
-        Settings.resolve(tmp_path / ".tts-studio"), include_test_adapters=True
-    )
-    database = Database(core.state.storage_layout.database_path)
-    database.migrate()
-    _activate_model(ModelRegistry(database))
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
     listener.listen()
     host, port = listener.getsockname()
+    core = create_app(
+        Settings(data_dir=tmp_path / ".tts-studio", host=host, port=port),
+        include_test_adapters=True,
+    )
+    database = Database(core.state.storage_layout.database_path)
+    database.migrate()
+    _activate_model(ModelRegistry(database))
     server = uvicorn.Server(uvicorn.Config(core, log_level="critical"))
     thread = Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
     thread.start()
@@ -120,9 +121,7 @@ def test_generation_command_help_excludes_style() -> None:
     assert "style" not in result.output.casefold()
 
 
-def test_voices_jobs_and_history_commands_use_public_core(
-    core_url: str, tmp_path: Path
-) -> None:
+def test_voices_jobs_and_history_commands_use_public_core(core_url: str, tmp_path: Path) -> None:
     model_id = "fixtures/compatible"
     voices = runner.invoke(
         app, ["voices", "list", "--model", model_id, "--json", "--url", core_url]
@@ -165,9 +164,7 @@ def test_voices_jobs_and_history_commands_use_public_core(
     history = runner.invoke(app, ["history", "list", "--json", "--url", core_url])
     assert history.exit_code == 0
     artifact_id = json.loads(history.output)[0]["id"]
-    deleted = runner.invoke(
-        app, ["history", "delete", artifact_id, "--json", "--url", core_url]
-    )
+    deleted = runner.invoke(app, ["history", "delete", artifact_id, "--json", "--url", core_url])
     if _identity_bound_unlink_available():
         assert deleted.exit_code == 0
         assert json.loads(deleted.output) == {"id": artifact_id, "deleted": True}

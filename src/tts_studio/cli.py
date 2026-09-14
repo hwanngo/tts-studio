@@ -312,7 +312,9 @@ def rollback_runtime(data_dir: Annotated[Path | None, typer.Option()] = None) ->
         try:
             _start_background(settings, include_test_adapters=False)
         except (OSError, RuntimeError, typer.BadParameter) as error:
-            raise typer.BadParameter(f"runtime rollback activated but Core restart failed: {error}") from error
+            raise typer.BadParameter(
+                f"runtime rollback activated but Core restart failed: {error}"
+            ) from error
     old_generation = next(
         (value for value in result.previous_generations.values() if value is not None),
         "unknown",
@@ -540,7 +542,9 @@ def create_provider(
 ) -> None:
     """Create an OpenAI-compatible provider profile."""
     try:
-        provider = CoreClient(url).create_provider(label=label, base_url=base_url, model=model, api_key_env=api_key_env)
+        provider = CoreClient(url).create_provider(
+            label=label, base_url=base_url, model=model, api_key_env=api_key_env
+        )
     except CoreUnavailable:
         _exit_core_unavailable(url, json_output=json_output)
     except CoreApiError as error:
@@ -636,7 +640,9 @@ def speak(
         try:
             text = file.read_text(encoding="utf-8")
         except OSError as error:
-            raise typer.BadParameter(f"could not read {file}: {error}", param_hint="--file") from error
+            raise typer.BadParameter(
+                f"could not read {file}: {error}", param_hint="--file"
+            ) from error
     assert text is not None
 
     client = CoreClient(url)
@@ -834,17 +840,15 @@ def _restart_after_runtime_failure(settings: Settings, record: CoreRunRecord | N
         return
     try:
         _start_background(settings, include_test_adapters=False)
-    except (OSError, RuntimeError, typer.BadParameter):
+    except OSError, RuntimeError, typer.BadParameter:
         pass
 
 
-def _rollback_after_restart_failure(
-    settings: Settings, manager: RuntimeUpgradeManager
-) -> None:
+def _rollback_after_restart_failure(settings: Settings, manager: RuntimeUpgradeManager) -> None:
     try:
         manager.rollback()
         _start_background(settings, include_test_adapters=False)
-    except (OSError, RuntimeError, ValueError, RuntimeUpgradeError, typer.BadParameter):
+    except OSError, RuntimeError, ValueError, RuntimeUpgradeError, typer.BadParameter:
         pass
 
 

@@ -239,7 +239,9 @@ class GenerationService:
         _validate_options(options)
         _validate_source(voice_id, reference_id, saved_voice_id)
         model = self._get_model(model_id)
-        provider_id = model_id.removeprefix("provider:") if model_id.startswith("provider:") else None
+        provider_id = (
+            model_id.removeprefix("provider:") if model_id.startswith("provider:") else None
+        )
         if provider_id is not None:
             if self._provider_registry is None:
                 raise GenerationModelNotFoundError from None
@@ -287,7 +289,9 @@ class GenerationService:
                 except (InvalidReferenceTransitionError, ReferenceRecordNotFoundError) as error:
                     raise GenerationReferenceNotFoundError from error
                 except ReferenceRecoveryRequiredError as error:
-                    raise GenerationRequestError("reference recovery is required before generation") from error
+                    raise GenerationRequestError(
+                        "reference recovery is required before generation"
+                    ) from error
                 reference_handle = _reference_handle(claimed)
             elif saved_voice_id is not None:
                 saved_voice = self._saved_voice_service.get(saved_voice_id)  # type: ignore[union-attr]
@@ -329,12 +333,25 @@ class GenerationService:
             self._scheduler.submit(job.id)
         except BaseException:
             self._reference_handles.pop(job.id, None)
-            cleanup_failed = not self._release_reference(reference_handle) if reference_handle is not None else False
+            cleanup_failed = (
+                not self._release_reference(reference_handle)
+                if reference_handle is not None
+                else False
+            )
             if cleanup_failed:
-                self._fail_job(job, "cleanup_failed", "Generation cleanup failed; restart Core to retry cleanup.", False)
+                self._fail_job(
+                    job,
+                    "cleanup_failed",
+                    "Generation cleanup failed; restart Core to retry cleanup.",
+                    False,
+                )
             else:
-                cleared = self._registry.clear_reference_id(job.id) if reference_id is not None else job
-                self._fail_job(cleared, "scheduler_failed", "Generation could not be scheduled.", False)
+                cleared = (
+                    self._registry.clear_reference_id(job.id) if reference_id is not None else job
+                )
+                self._fail_job(
+                    cleared, "scheduler_failed", "Generation could not be scheduled.", False
+                )
             raise
         return job
 
@@ -346,12 +363,16 @@ class GenerationService:
             if existing is not None:
                 return existing
             if not original.can_retry:
-                raise GenerationRetryError("Generation Job cannot be retried; create a new request.")
+                raise GenerationRetryError(
+                    "Generation Job cannot be retried; create a new request."
+                )
             # A terminal row can become visible just before its task finishes cleanup.
             await self._scheduler.wait(job_id)
             original = self.get(job_id)
             if not original.can_retry:
-                raise GenerationRetryError("Generation Job cannot be retried; create a new request.")
+                raise GenerationRetryError(
+                    "Generation Job cannot be retried; create a new request."
+                )
             try:
                 return await self.create(
                     model_id=original.model_id,
@@ -364,7 +385,9 @@ class GenerationService:
                     _retry_of=original.id,
                 )
             except InvalidGenerationTransitionError as error:
-                raise GenerationRetryError("Generation Job cannot be retried; create a new request.") from error
+                raise GenerationRetryError(
+                    "Generation Job cannot be retried; create a new request."
+                ) from error
 
     def get(self, job_id: str) -> GenerationJob:
         try:
@@ -385,7 +408,11 @@ class GenerationService:
         artifact = self._alignment_artifact(job)
         self._verify_alignment_artifact(artifact)
         _validate_alignment_transcript(job.text)
-        if not isinstance(correlation_id, str) or not correlation_id.strip() or "\0" in correlation_id:
+        if (
+            not isinstance(correlation_id, str)
+            or not correlation_id.strip()
+            or "\0" in correlation_id
+        ):
             raise GenerationRequestError("correlation_id must be a non-empty safe string")
         model = self._get_model(job.model_id)
         async with self._acquire_worker(model) as lease:
@@ -398,7 +425,11 @@ class GenerationService:
                 _require_alignment_capability(lease.capabilities)
             finally:
                 await self._unload_model(lease, model)
-            created = self._registry.retry_alignment(job.id) if existing is not None else self._registry.create_alignment(job.id)
+            created = (
+                self._registry.retry_alignment(job.id)
+                if existing is not None
+                else self._registry.create_alignment(job.id)
+            )
             try:
                 self._alignment_scheduler.submit(job.id)
             except BaseException:
@@ -718,9 +749,7 @@ class GenerationService:
             if root_fd is not None:
                 os.close(root_fd)
 
-    def _require_current_audio_directory(
-        self, candidate: _ValidatedArtifactDeletion
-    ) -> None:
+    def _require_current_audio_directory(self, candidate: _ValidatedArtifactDeletion) -> None:
         try:
             root_metadata = os.stat(self._layout.root, follow_symlinks=False)
             audio_metadata = os.stat(self._layout.audio, follow_symlinks=False)
@@ -793,7 +822,9 @@ class GenerationService:
             os.fsync(staging_fd)
             metadata = os.fstat(staging_fd)
             expected_size = artifact.byte_size if artifact is not None else len(payload)
-            expected_sha256 = artifact.sha256 if artifact is not None else hashlib.sha256(payload).hexdigest()
+            expected_sha256 = (
+                artifact.sha256 if artifact is not None else hashlib.sha256(payload).hexdigest()
+            )
             if metadata.st_size != expected_size:
                 raise OSError("restored artifact size does not match metadata")
             os.lseek(staging_fd, 0, os.SEEK_SET)
@@ -841,7 +872,9 @@ class GenerationService:
         _validate_text(text)
         _validate_source(voice_id, None)
         model = self._get_model(model_id)
-        provider_id = model_id.removeprefix("provider:") if model_id.startswith("provider:") else None
+        provider_id = (
+            model_id.removeprefix("provider:") if model_id.startswith("provider:") else None
+        )
         if provider_id is not None:
             if self._provider_registry is None:
                 raise GenerationModelNotFoundError from None
@@ -868,7 +901,8 @@ class GenerationService:
                         text,
                         voice_id=voice_id,
                         provider_config=_provider_config(self._provider_registry, provider_id)
-                        if provider_id is not None else None,
+                        if provider_id is not None
+                        else None,
                     )
                 )
                 pcm, result = await _consume_preview_stream(stream)
@@ -906,10 +940,17 @@ class GenerationService:
         for job in self._registry.list_jobs():
             if job.model_id != model_id:
                 continue
-            if job.state not in {GenerationState.COMPLETED, GenerationState.CANCELLED, GenerationState.FAILED}:
+            if job.state not in {
+                GenerationState.COMPLETED,
+                GenerationState.CANCELLED,
+                GenerationState.FAILED,
+            }:
                 return True
             alignment = self.get_alignment(job.id)
-            if alignment is not None and alignment.state in {AlignmentState.QUEUED, AlignmentState.RUNNING}:
+            if alignment is not None and alignment.state in {
+                AlignmentState.QUEUED,
+                AlignmentState.RUNNING,
+            }:
                 return True
         return False
 
@@ -971,7 +1012,11 @@ class GenerationService:
                         error=recovered.error,
                     )
                     continue
-            if job.state is GenerationState.FAILED and job.error and job.error.get("code") == "cleanup_failed":
+            if (
+                job.state is GenerationState.FAILED
+                and job.error
+                and job.error.get("code") == "cleanup_failed"
+            ):
                 cleanup_still_failed = False
                 try:
                     self._remove_job_artifact(job)
@@ -1026,7 +1071,7 @@ class GenerationService:
         for job in self._registry.list_jobs():
             try:
                 alignment = self.get_alignment(job.id)
-            except (InvalidRegistryDataError, TypeError, ValueError, UnicodeError):
+            except InvalidRegistryDataError, TypeError, ValueError, UnicodeError:
                 try:
                     self._registry.recover_alignment(job.id)
                 except GenerationRecordNotFoundError:
@@ -1035,7 +1080,9 @@ class GenerationService:
             if alignment is None:
                 continue
             if alignment.state is AlignmentState.RUNNING:
-                self._registry.fail_alignment(job.id, _alignment_error("alignment_recovery_required", True))
+                self._registry.fail_alignment(
+                    job.id, _alignment_error("alignment_recovery_required", True)
+                )
             elif alignment.state is AlignmentState.QUEUED:
                 self._alignment_scheduler.submit(job.id)
 
@@ -1046,10 +1093,13 @@ class GenerationService:
         for job in self._registry.list_jobs():
             try:
                 alignment = self.get_alignment(job.id)
-            except (InvalidRegistryDataError, TypeError, ValueError, UnicodeError):
+            except InvalidRegistryDataError, TypeError, ValueError, UnicodeError:
                 self._registry.recover_alignment(job.id)
                 continue
-            if alignment is not None and alignment.state in {AlignmentState.QUEUED, AlignmentState.RUNNING}:
+            if alignment is not None and alignment.state in {
+                AlignmentState.QUEUED,
+                AlignmentState.RUNNING,
+            }:
                 self._registry.fail_alignment(job.id, _alignment_error("alignment_cancelled", True))
         for job_id, handle in tuple(self._reference_handles.items()):
             self._reference_handles.pop(job_id, None)
@@ -1057,7 +1107,11 @@ class GenerationService:
                 job = self.get(job_id)
             except GenerationJobNotFoundError:
                 continue
-            if job.state in {GenerationState.COMPLETED, GenerationState.CANCELLED, GenerationState.FAILED}:
+            if job.state in {
+                GenerationState.COMPLETED,
+                GenerationState.CANCELLED,
+                GenerationState.FAILED,
+            }:
                 continue
             cleanup_succeeded = self._release_reference(handle)
             code = "reference_recovery_required" if cleanup_succeeded else "cleanup_failed"
@@ -1094,10 +1148,16 @@ class GenerationService:
                 capability = _require_alignment_capability(lease.capabilities)
                 snapshot = self._create_alignment_snapshot(artifact)
                 try:
-                    response = await lease.align(engine_pb2.AlignRequest(model_id=model.id, audio_path=snapshot[1], transcript=job.text))
+                    response = await lease.align(
+                        engine_pb2.AlignRequest(
+                            model_id=model.id, audio_path=snapshot[1], transcript=job.text
+                        )
+                    )
                 finally:
                     snapshot[0].unlink(missing_ok=True)
-                result = _alignment_result_from_worker(response, job=job, artifact=artifact, capability=capability)
+                result = _alignment_result_from_worker(
+                    response, job=job, artifact=artifact, capability=capability
+                )
                 self._verify_alignment_artifact(artifact)
                 self._registry.complete_alignment(job.id, result)
                 completed = True
@@ -1113,7 +1173,7 @@ class GenerationService:
                 failure = ("artifact_invalid", False)
             except WorkerOperationError as error:
                 failure = (error.code or "worker_failed", error.retryable)
-            except (InvalidRegistryDataError, _MalformedAlignment):
+            except InvalidRegistryDataError, _MalformedAlignment:
                 failure = ("malformed_alignment", False)
             except TimeoutError:
                 failure = ("alignment_deadline_exceeded", True)
@@ -1140,7 +1200,10 @@ class GenerationService:
                         current = self.get_alignment(job_id)
                     except GenerationJobNotFoundError:
                         current = None
-                    if current is not None and current.state in {AlignmentState.QUEUED, AlignmentState.RUNNING}:
+                    if current is not None and current.state in {
+                        AlignmentState.QUEUED,
+                        AlignmentState.RUNNING,
+                    }:
                         self._registry.fail_alignment(job_id, _alignment_error(*failure))
 
     async def _run_job(self, job_id: str) -> None:
@@ -1201,9 +1264,15 @@ class GenerationService:
                 await lease.load_model(model)
                 loaded_lease = lease
                 loaded_model = model
-                generating = self._transition(loading, GenerationState.GENERATING, "Generating audio.")
+                generating = self._transition(
+                    loading, GenerationState.GENERATING, "Generating audio."
+                )
                 writer = WavArtifactWriter(self._layout, _artifact_id(job.id))
-                if job.reference_id is None and job.saved_voice_id is None and not lease.capabilities.supports("preset_voices"):
+                if (
+                    job.reference_id is None
+                    and job.saved_voice_id is None
+                    and not lease.capabilities.supports("preset_voices")
+                ):
                     raise _GenerationFailure(
                         "capability_unsupported",
                         "The Worker does not support preset voices.",
@@ -1219,7 +1288,8 @@ class GenerationService:
                         reference_path=reference_handle.relative_path if reference_handle else None,
                         transcript=reference_handle.transcript if reference_handle else None,
                         provider_config=_provider_config(self._provider_registry, job.provider_id)
-                        if job.provider_id is not None else None,
+                        if job.provider_id is not None
+                        else None,
                         speed=options.speed if options else None,
                         pitch=options.pitch if options else None,
                         volume=options.volume if options else None,
@@ -1238,7 +1308,9 @@ class GenerationService:
                 )
                 artifact_id = _artifact_id(job.id)
                 if job.retain_artifact:
-                    path = writer.finalize(byte_count=result.byte_count, frame_count=result.frame_count)
+                    path = writer.finalize(
+                        byte_count=result.byte_count, frame_count=result.frame_count
+                    )
                     published_artifact_id = artifact_id
                     self._registry.create_artifact(
                         job_id=job.id,
@@ -1275,11 +1347,16 @@ class GenerationService:
                 loaded_model = None
             except asyncio.CancelledError:
                 current = self.get(job_id)
-                if not self._closing and current.cancellation_requested and current.state in {
-                    GenerationState.QUEUED,
-                    GenerationState.LOADING,
-                    GenerationState.GENERATING,
-                }:
+                if (
+                    not self._closing
+                    and current.cancellation_requested
+                    and current.state
+                    in {
+                        GenerationState.QUEUED,
+                        GenerationState.LOADING,
+                        GenerationState.GENERATING,
+                    }
+                ):
                     cancellation_pending = True
                 else:
                     raise
@@ -1287,11 +1364,16 @@ class GenerationService:
                 cancellation_pending = True
             except InvalidGenerationTransitionError:
                 current = self.get(job_id)
-                if not self._closing and current.cancellation_requested and current.state in {
-                    GenerationState.QUEUED,
-                    GenerationState.LOADING,
-                    GenerationState.GENERATING,
-                }:
+                if (
+                    not self._closing
+                    and current.cancellation_requested
+                    and current.state
+                    in {
+                        GenerationState.QUEUED,
+                        GenerationState.LOADING,
+                        GenerationState.GENERATING,
+                    }
+                ):
                     cancellation_pending = True
                 else:
                     failure = ("generation_failed", "Generation state could not advance.", False)
@@ -1307,13 +1389,22 @@ class GenerationService:
                 )
             except Exception:  # noqa: BLE001 - durable job boundary normalizes Worker/filesystem faults
                 current = self.get(job_id)
-                if not self._closing and current.cancellation_requested and current.state in {
-                    GenerationState.QUEUED,
-                    GenerationState.LOADING,
-                    GenerationState.GENERATING,
-                }:
+                if (
+                    not self._closing
+                    and current.cancellation_requested
+                    and current.state
+                    in {
+                        GenerationState.QUEUED,
+                        GenerationState.LOADING,
+                        GenerationState.GENERATING,
+                    }
+                ):
                     cancellation_pending = True
-                elif current.state not in {GenerationState.COMPLETED, GenerationState.CANCELLED, GenerationState.FAILED}:
+                elif current.state not in {
+                    GenerationState.COMPLETED,
+                    GenerationState.CANCELLED,
+                    GenerationState.FAILED,
+                }:
                     failure = ("generation_failed", "Generation failed.", False)
             finally:
                 self._streams.pop(job_id, None)
@@ -1353,7 +1444,11 @@ class GenerationService:
                     except Exception:  # noqa: BLE001 - expose cleanup failure durably
                         cleanup_failed = True
                 if cleanup_failed:
-                    failure = ("cleanup_failed", "Generation cleanup failed; restart Core to retry cleanup.", False)
+                    failure = (
+                        "cleanup_failed",
+                        "Generation cleanup failed; restart Core to retry cleanup.",
+                        False,
+                    )
                 if failure is not None:
                     self._fail_job(self.get(job_id), *failure)
                 elif cancellation_pending:
@@ -1362,9 +1457,7 @@ class GenerationService:
                 if final_job.state is not GenerationState.COMPLETED or final_job.retain_artifact:
                     self._pcm_replay.pop(job_id, None)
                     self._pcm_replay_disabled.discard(job_id)
-                subscription_lock = self._pcm_subscription_locks.setdefault(
-                    job_id, asyncio.Lock()
-                )
+                subscription_lock = self._pcm_subscription_locks.setdefault(job_id, asyncio.Lock())
                 async with subscription_lock:
                     subscribers = tuple(self._pcm_subscribers.pop(job_id, set()))
                     self._pcm_subscription_locks.pop(job_id, None)
@@ -1390,9 +1483,13 @@ class GenerationService:
                     raise _GenerationCancelled
                 payload = event.WhichOneof("payload")
                 if result_event is not None:
-                    raise _GenerationFailure("malformed_pcm", "The Worker sent an event after its terminal result.")
+                    raise _GenerationFailure(
+                        "malformed_pcm", "The Worker sent an event after its terminal result."
+                    )
                 if validator.audio_format is None and payload not in {"header", "error"}:
-                    raise _GenerationFailure("malformed_pcm", "The Worker must send the audio header first.")
+                    raise _GenerationFailure(
+                        "malformed_pcm", "The Worker must send the audio header first."
+                    )
                 if payload == "header":
                     try:
                         validator.accept_header(event.header)
@@ -1419,7 +1516,7 @@ class GenerationService:
                     for subscriber in tuple(self._pcm_subscribers.get(job.id, ())):
                         try:
                             subscriber.put_nowait(pcm)
-                        except (asyncio.QueueFull, RuntimeError, asyncio.QueueShutDown):
+                        except asyncio.QueueFull, RuntimeError, asyncio.QueueShutDown:
                             self._terminate_pcm_subscriber(job.id, subscriber)
                 elif payload == "progress":
                     self._publish(
@@ -1438,7 +1535,9 @@ class GenerationService:
                         retryable=event.error.retryable,
                     )
                 else:
-                    raise _GenerationFailure("malformed_pcm", "The Worker sent an unknown synthesis event.")
+                    raise _GenerationFailure(
+                        "malformed_pcm", "The Worker sent an unknown synthesis event."
+                    )
             await queue.put(ByteBudgetQueueSignal.END)
 
         async def consume() -> None:
@@ -1458,7 +1557,9 @@ class GenerationService:
             await asyncio.gather(producer, consumer, return_exceptions=True)
             raise
         if result_event is None:
-            raise _GenerationFailure("malformed_pcm", "The Worker ended without a synthesis result.")
+            raise _GenerationFailure(
+                "malformed_pcm", "The Worker ended without a synthesis result."
+            )
         try:
             pcm_result = validator.finish(result_event)
         except AudioValidationError as error:
@@ -1482,10 +1583,12 @@ class GenerationService:
             subscriber.put_nowait(None)
         except asyncio.QueueFull:
             return
-        except (RuntimeError, asyncio.QueueShutDown):
+        except RuntimeError, asyncio.QueueShutDown:
             self._pcm_terminated[job_id].discard(subscriber)
 
-    def _transition(self, job: GenerationJob, state: GenerationState, message: str, **kwargs: Any) -> GenerationJob:
+    def _transition(
+        self, job: GenerationJob, state: GenerationState, message: str, **kwargs: Any
+    ) -> GenerationJob:
         updated = self._registry.transition_job(job.id, state, **kwargs)
         event_type = {
             GenerationState.LOADING: "generation.loading",
@@ -1495,7 +1598,11 @@ class GenerationService:
         return updated
 
     def _cancel_job(self, job: GenerationJob) -> GenerationJob:
-        if job.state in {GenerationState.COMPLETED, GenerationState.CANCELLED, GenerationState.FAILED}:
+        if job.state in {
+            GenerationState.COMPLETED,
+            GenerationState.CANCELLED,
+            GenerationState.FAILED,
+        }:
             return job
         cancelled = self._registry.transition_job(
             job.id,
@@ -1506,17 +1613,29 @@ class GenerationService:
                 "retryable": False,
             },
         )
-        self._publish(cancelled, "generation.cancelled", "Generation was cancelled.", error=cancelled.error)
+        self._publish(
+            cancelled, "generation.cancelled", "Generation was cancelled.", error=cancelled.error
+        )
         return cancelled
 
     def _fail_job(self, job: GenerationJob, code: str, message: str, retryable: bool) -> None:
-        if job.state in {GenerationState.COMPLETED, GenerationState.CANCELLED, GenerationState.FAILED}:
+        if job.state in {
+            GenerationState.COMPLETED,
+            GenerationState.CANCELLED,
+            GenerationState.FAILED,
+        }:
             return
-        retryable = retryable if self._closing else (
-            retryable and job.retain_artifact and job.artifact_id is None
-            and job.reference_id is None
-            and (job.voice_id is not None or job.saved_voice_id is not None)
-            and code not in {"cleanup_failed", "reference_recovery_required"}
+        retryable = (
+            retryable
+            if self._closing
+            else (
+                retryable
+                and job.retain_artifact
+                and job.artifact_id is None
+                and job.reference_id is None
+                and (job.voice_id is not None or job.saved_voice_id is not None)
+                and code not in {"cleanup_failed", "reference_recovery_required"}
+            )
         )
         failed = self._registry.transition_job(
             job.id,
@@ -1565,12 +1684,23 @@ class GenerationService:
             except ProviderNotFoundError as error:
                 raise GenerationModelNotFoundError from error
             return ModelInstallation(
-                id=model_id, repository_id=model_id, requested_revision=None,
-                resolved_commit="remote", engine_installation_id="openai_compatible@remote",
-                compatibility_evidence={"engine_id": "openai_compatible"}, runtime_variant="remote",
-                manifest={}, checksum_summary={}, byte_size=0, cache_path="models/remote",
-                desired_load_state="loaded", observed_load_state="loaded", replica_summary={},
-                last_error=None, created_at="", updated_at="",
+                id=model_id,
+                repository_id=model_id,
+                requested_revision=None,
+                resolved_commit="remote",
+                engine_installation_id="openai_compatible@remote",
+                compatibility_evidence={"engine_id": "openai_compatible"},
+                runtime_variant="remote",
+                manifest={},
+                checksum_summary={},
+                byte_size=0,
+                cache_path="models/remote",
+                desired_load_state="loaded",
+                observed_load_state="loaded",
+                replica_summary={},
+                last_error=None,
+                created_at="",
+                updated_at="",
             )
         try:
             return self._model_registry.get_model(model_id)
@@ -1600,7 +1730,14 @@ class GenerationService:
             raise GenerationRequestError("alignment requires a completed Generation Job")
         if not job.retain_artifact or job.artifact_id is None:
             raise GenerationRequestError("alignment requires a retained Audio Artifact")
-        artifact = next((item for item in self._registry.list_history() if item.id == job.artifact_id and item.job_id == job.id), None)
+        artifact = next(
+            (
+                item
+                for item in self._registry.list_history()
+                if item.id == job.artifact_id and item.job_id == job.id
+            ),
+            None,
+        )
         if artifact is None:
             raise GenerationRequestError("alignment requires a retained Audio Artifact")
         return artifact
@@ -1682,8 +1819,7 @@ class GenerationService:
             directory = self._layout.checked_directory(directory_name)
             for path in directory.iterdir():
                 generation_temporary = (
-                    path.name.startswith(".generation-")
-                    and path.suffix in suffixes
+                    path.name.startswith(".generation-") and path.suffix in suffixes
                 )
                 restore_temporary = (
                     directory_name == "audio"
@@ -1785,7 +1921,11 @@ class _MalformedAlignment(ValueError):
 
 
 def _alignment_is_retryable(alignment: AlignmentJob) -> bool:
-    return alignment.state is AlignmentState.FAILED and alignment.error is not None and alignment.error.get("retryable") is True
+    return (
+        alignment.state is AlignmentState.FAILED
+        and alignment.error is not None
+        and alignment.error.get("retryable") is True
+    )
 
 
 def _require_alignment_capability(capabilities: Any) -> AlignmentCapability:
@@ -1805,7 +1945,12 @@ def _require_alignment_capability(capabilities: Any) -> AlignmentCapability:
 
 
 def _validate_alignment_transcript(transcript: str) -> None:
-    if not isinstance(transcript, str) or not transcript.strip() or "\0" in transcript or len(transcript) > _MAX_ALIGNMENT_TRANSCRIPT:
+    if (
+        not isinstance(transcript, str)
+        or not transcript.strip()
+        or "\0" in transcript
+        or len(transcript) > _MAX_ALIGNMENT_TRANSCRIPT
+    ):
         raise GenerationRequestError("alignment transcript exceeds supported bounds")
     try:
         transcript.encode("utf-8")
@@ -1813,15 +1958,32 @@ def _validate_alignment_transcript(transcript: str) -> None:
         raise GenerationRequestError("alignment transcript is not valid UTF-8") from error
 
 
-def _alignment_result_from_worker(response: engine_pb2.AlignResponse, *, job: GenerationJob, artifact: AudioArtifact, capability: AlignmentCapability) -> AlignmentResult:
+def _alignment_result_from_worker(
+    response: engine_pb2.AlignResponse,
+    *,
+    job: GenerationJob,
+    artifact: AudioArtifact,
+    capability: AlignmentCapability,
+) -> AlignmentResult:
     if not isinstance(response, engine_pb2.AlignResponse) or not response.HasField("result"):
         raise _MalformedAlignment("Worker response has no result")
     worker_result = response.result
-    if len(worker_result.SerializeToString()) > _MAX_ALIGNMENT_PROTO_BYTES or worker_result.schema_version != 1:
+    if (
+        len(worker_result.SerializeToString()) > _MAX_ALIGNMENT_PROTO_BYTES
+        or worker_result.schema_version != 1
+    ):
         raise _MalformedAlignment("Worker result is unsupported or exceeds bounds")
-    if worker_result.transcript != job.text or worker_result.sample_rate_hz != artifact.sample_rate or worker_result.total_frames != artifact.frame_count:
+    if (
+        worker_result.transcript != job.text
+        or worker_result.sample_rate_hz != artifact.sample_rate
+        or worker_result.total_frames != artifact.frame_count
+    ):
         raise _MalformedAlignment("Worker metadata does not match durable artifact")
-    if worker_result.unit not in _ALIGNMENT_UNITS or worker_result.unit not in capability.units or worker_result.aligner != capability.aligner:
+    if (
+        worker_result.unit not in _ALIGNMENT_UNITS
+        or worker_result.unit not in capability.units
+        or worker_result.aligner != capability.aligner
+    ):
         raise _MalformedAlignment("Worker alignment identity is not advertised")
     if len(worker_result.units) > _MAX_ALIGNMENT_UNITS:
         raise _MalformedAlignment("Worker unit count exceeds bounds")
@@ -1834,7 +1996,10 @@ def _alignment_result_from_worker(response: engine_pb2.AlignResponse, *, job: Ge
         source_start, source_end = int(item.source_start), int(item.source_end)
         start_frames, end_frames = int(item.start_frames), int(item.end_frames)
         confidence = float(item.confidence)
-        if not 0 <= source_start < source_end <= len(transcript_bytes) or source_start < previous_source_end:
+        if (
+            not 0 <= source_start < source_end <= len(transcript_bytes)
+            or source_start < previous_source_end
+        ):
             raise _MalformedAlignment("Worker source range is invalid")
         try:
             source_text = transcript_bytes[source_start:source_end].decode("utf-8")
@@ -1842,13 +2007,36 @@ def _alignment_result_from_worker(response: engine_pb2.AlignResponse, *, job: Ge
             raise _MalformedAlignment("Worker source range is not UTF-8 aligned") from error
         if not item.text or item.text != source_text or "\0" in item.text:
             raise _MalformedAlignment("Worker unit text does not match transcript")
-        if not 0 <= start_frames < end_frames <= artifact.frame_count or start_frames < previous_frame_end:
+        if (
+            not 0 <= start_frames < end_frames <= artifact.frame_count
+            or start_frames < previous_frame_end
+        ):
             raise _MalformedAlignment("Worker frame range is invalid")
         if not math.isfinite(confidence) or not 0 <= confidence <= 1:
             raise _MalformedAlignment("Worker confidence is invalid")
-        units.append(AlignmentUnit(item.text, source_start, source_end, start_frames, end_frames, confidence, bool(item.estimated)))
+        units.append(
+            AlignmentUnit(
+                item.text,
+                source_start,
+                source_end,
+                start_frames,
+                end_frames,
+                confidence,
+                bool(item.estimated),
+            )
+        )
         previous_source_end, previous_frame_end = source_end, end_frames
-    return AlignmentResult(1, job.id, artifact.id, job.text, artifact.sample_rate, artifact.frame_count, worker_result.unit, worker_result.aligner, tuple(units))
+    return AlignmentResult(
+        1,
+        job.id,
+        artifact.id,
+        job.text,
+        artifact.sample_rate,
+        artifact.frame_count,
+        worker_result.unit,
+        worker_result.aligner,
+        tuple(units),
+    )
 
 
 def _alignment_exception(error: Exception) -> tuple[str, bool]:
@@ -1866,7 +2054,11 @@ def _alignment_exception(error: Exception) -> tuple[str, bool]:
 
 
 def _alignment_error(code: str, retryable: bool) -> dict[str, Any]:
-    safe_code = code if isinstance(code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) else "worker_failed"
+    safe_code = (
+        code
+        if isinstance(code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code)
+        else "worker_failed"
+    )
     return {"code": safe_code, "message": "Alignment failed.", "retryable": retryable}
 
 
@@ -1880,11 +2072,19 @@ def _validate_text(text: str) -> None:
 def _validate_options(options: SynthesisOptions | None) -> None:
     if options is None:
         return
-    bounds = (("speed", options.speed, 0.25, 4.0), ("pitch", options.pitch, -1.0, 1.0), ("volume", options.volume, 0.0, 2.0))
+    bounds = (
+        ("speed", options.speed, 0.25, 4.0),
+        ("pitch", options.pitch, -1.0, 1.0),
+        ("volume", options.volume, 0.0, 2.0),
+    )
     for name, value, minimum, maximum in bounds:
         if value is None:
             continue
-        if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+        ):
             raise GenerationRequestError(f"{name} must be finite")
         if not minimum <= value <= maximum:
             raise GenerationRequestError(f"{name} must be between {minimum} and {maximum}")
@@ -1893,7 +2093,11 @@ def _validate_options(options: SynthesisOptions | None) -> None:
 def _require_option_capabilities(lease: Any, options: SynthesisOptions | None) -> None:
     if options is None:
         return
-    for name, value in (("speed", options.speed), ("pitch", options.pitch), ("volume", options.volume)):
+    for name, value in (
+        ("speed", options.speed),
+        ("pitch", options.pitch),
+        ("volume", options.volume),
+    ):
         if value is not None and not lease.capabilities.supports(name):
             raise GenerationCapabilityError(f"the Worker does not support the {name} option")
 
@@ -1934,15 +2138,25 @@ def _engine_id(model: ModelInstallation) -> str:
 
 def _provider_config(registry: ProviderRegistry | None, provider_id: str) -> tuple[str, str, str]:
     if registry is None:
-        raise _GenerationFailure("provider_configuration_missing", "The provider configuration is unavailable.", retryable=True)
+        raise _GenerationFailure(
+            "provider_configuration_missing",
+            "The provider configuration is unavailable.",
+            retryable=True,
+        )
     try:
         profile = registry.get(provider_id)
     except ProviderNotFoundError as error:
-        raise _GenerationFailure("provider_configuration_missing", "The provider configuration is unavailable.") from error
+        raise _GenerationFailure(
+            "provider_configuration_missing", "The provider configuration is unavailable."
+        ) from error
     try:
         key = ProviderService.resolve_api_key(profile)
     except Exception as error:
-        raise _GenerationFailure("provider_configuration_missing", "The provider credential is not configured.", retryable=True) from error
+        raise _GenerationFailure(
+            "provider_configuration_missing",
+            "The provider credential is not configured.",
+            retryable=True,
+        ) from error
     return profile.base_url, profile.model, key
 
 

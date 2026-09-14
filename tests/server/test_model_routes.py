@@ -277,9 +277,7 @@ async def test_invalid_repository_id_uses_safe_error_envelope_and_is_not_logged(
             base_url="http://test",
         ) as client,
     ):
-        response = await client.post(
-            "/api/v1/models/validate", json={"repository_id": rejected}
-        )
+        response = await client.post("/api/v1/models/validate", json={"repository_id": rejected})
 
     error = _assert_error(response, 422, "repository_id_invalid")
     assert error["source"] == "model_registry"

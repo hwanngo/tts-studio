@@ -81,7 +81,9 @@ class _Server:
         self.thread.join()
 
 
-def test_cross_origin_redirect_never_forwards_provider_authorization(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cross_origin_redirect_never_forwards_provider_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     destination_handler = type("DestinationHandler", (_RedirectHandler,), {})
     destination_handler.received_authorizations = []
     destination = _Server(destination_handler)
@@ -104,7 +106,9 @@ def test_cross_origin_redirect_never_forwards_provider_authorization(monkeypatch
     assert destination_handler.received_authorizations == []
 
 
-def test_same_origin_redirect_preserves_provider_authorization(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_same_origin_redirect_preserves_provider_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     handler = type("SameOriginHandler", (_RedirectHandler,), {})
     handler.received_authorizations = []
     server = _Server(handler)
@@ -119,7 +123,9 @@ def test_same_origin_redirect_preserves_provider_authorization(monkeypatch: pyte
     assert handler.received_authorizations == ["Bearer secret", "Bearer secret"]
 
 
-def test_provider_request_rejects_dns_failure_without_sending_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_provider_request_rejects_dns_failure_without_sending_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fail_resolution(*args, **kwargs):
         raise OSError("DNS unavailable")
 
@@ -139,7 +145,9 @@ def test_provider_request_rejects_private_rebinding_before_connect(
         nonlocal calls
         calls += 1
         address = "93.184.216.34" if calls == 1 else "10.0.0.1"
-        return [(http_module.socket.AF_INET, http_module.socket.SOCK_STREAM, 6, "", (address, port))]
+        return [
+            (http_module.socket.AF_INET, http_module.socket.SOCK_STREAM, 6, "", (address, port))
+        ]
 
     monkeypatch.setattr(http_module.socket, "getaddrinfo", rebinding_resolution)
     with pytest.raises(http_module.ProviderRequestError) as error:
@@ -195,7 +203,9 @@ async def test_blocked_provider_response_is_cancelled_at_transport_boundary(
 
 
 @pytest.mark.asyncio
-async def test_cancelled_provider_request_quiesces_executor_operation(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_cancelled_provider_request_quiesces_executor_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     started = threading.Event()
     finished = threading.Event()
 
@@ -224,7 +234,9 @@ async def test_cancelled_provider_request_quiesces_executor_operation(monkeypatc
     assert finished.is_set()
 
 
-def test_non_redirect_provider_request_keeps_existing_behavior(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_redirect_provider_request_keeps_existing_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     handler = type("OrdinaryHandler", (_RedirectHandler,), {})
     handler.received_authorizations = []
     server = _Server(handler)

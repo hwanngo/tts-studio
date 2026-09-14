@@ -47,26 +47,40 @@ class _BasicLimit(ctypes.Structure):
 
 
 class _IoCounters(ctypes.Structure):
-    _fields_ = [(name, ctypes.c_uint64) for name in (
-        "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
-        "ReadTransferCount", "WriteTransferCount", "OtherTransferCount",
-    )]
+    _fields_ = [
+        (name, ctypes.c_uint64)
+        for name in (
+            "ReadOperationCount",
+            "WriteOperationCount",
+            "OtherOperationCount",
+            "ReadTransferCount",
+            "WriteTransferCount",
+            "OtherTransferCount",
+        )
+    ]
 
 
 class _ExtendedLimit(ctypes.Structure):
     _fields_ = [
-        ("BasicLimitInformation", _BasicLimit), ("IoInfo", _IoCounters),
-        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
-        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ("BasicLimitInformation", _BasicLimit),
+        ("IoInfo", _IoCounters),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
     ]
 
 
 class _Accounting(ctypes.Structure):
     _fields_ = [
-        ("TotalUserTime", ctypes.c_int64), ("TotalKernelTime", ctypes.c_int64),
-        ("ThisPeriodTotalUserTime", ctypes.c_int64), ("ThisPeriodTotalKernelTime", ctypes.c_int64),
-        ("TotalPageFaultCount", ctypes.c_uint32), ("TotalProcesses", ctypes.c_uint32),
-        ("ActiveProcesses", ctypes.c_uint32), ("TotalTerminatedProcesses", ctypes.c_uint32),
+        ("TotalUserTime", ctypes.c_int64),
+        ("TotalKernelTime", ctypes.c_int64),
+        ("ThisPeriodTotalUserTime", ctypes.c_int64),
+        ("ThisPeriodTotalKernelTime", ctypes.c_int64),
+        ("TotalPageFaultCount", ctypes.c_uint32),
+        ("TotalProcesses", ctypes.c_uint32),
+        ("ActiveProcesses", ctypes.c_uint32),
+        ("TotalTerminatedProcesses", ctypes.c_uint32),
     ]
 
 
@@ -78,11 +92,17 @@ class WindowsJob:
         self._api = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)  # noqa: B009
         signatures = {
             "CreateJobObjectW": ([ctypes.c_void_p, ctypes.c_wchar_p], ctypes.c_void_p),
-            "SetInformationJobObject": ([ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32], ctypes.c_int),
+            "SetInformationJobObject": (
+                [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32],
+                ctypes.c_int,
+            ),
             "OpenProcess": ([ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32], ctypes.c_void_p),
             "AssignProcessToJobObject": ([ctypes.c_void_p, ctypes.c_void_p], ctypes.c_int),
             "TerminateJobObject": ([ctypes.c_void_p, ctypes.c_uint32], ctypes.c_int),
-            "QueryInformationJobObject": ([ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p], ctypes.c_int),
+            "QueryInformationJobObject": (
+                [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p],
+                ctypes.c_int,
+            ),
             "CloseHandle": ([ctypes.c_void_p], ctypes.c_int),
         }
         for name, (arguments, result) in signatures.items():
@@ -93,7 +113,9 @@ class WindowsJob:
             raise OSError("Could not create Worker Job Object")
         limits = _ExtendedLimit()
         limits.BasicLimitInformation.LimitFlags = _KILL_ON_JOB_CLOSE
-        if not self._api.SetInformationJobObject(self._handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+        if not self._api.SetInformationJobObject(
+            self._handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)
+        ):
             self.close()
             raise OSError("Could not configure Worker Job Object")
 
@@ -128,7 +150,9 @@ class WindowsJob:
 
 
 async def launch_in_job(
-    arguments: Sequence[str], *, job_factory: Callable[[], JobHandle] = WindowsJob,
+    arguments: Sequence[str],
+    *,
+    job_factory: Callable[[], JobHandle] = WindowsJob,
     **kwargs: Any,
 ) -> Process:
     """Assign the blocked trusted gate before permitting an engine to spawn."""
@@ -136,8 +160,13 @@ async def launch_in_job(
     process: Process | None = None
     try:
         process = await asyncio.create_subprocess_exec(
-            sys.executable, "-I", "-c", _GATE, *arguments,
-            stdin=asyncio.subprocess.PIPE, **kwargs,
+            sys.executable,
+            "-I",
+            "-c",
+            _GATE,
+            *arguments,
+            stdin=asyncio.subprocess.PIPE,
+            **kwargs,
         )
         job.assign(process.pid)
         _jobs[process] = job

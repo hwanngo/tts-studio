@@ -37,7 +37,7 @@ def http_server_url(tmp_path: Path) -> Iterator[str]:
 
     server = uvicorn.Server(
         uvicorn.Config(
-            create_app(Settings.resolve(tmp_path / ".tts-studio")),
+            create_app(Settings(data_dir=tmp_path / ".tts-studio", host=host, port=port)),
             log_level="critical",
         )
     )
@@ -171,7 +171,11 @@ def test_foreground_write_failure_releases_claim(
 ) -> None:
     data_dir = tmp_path / "data"
     monkeypatch.setattr(cli, "create_app", lambda settings: settings)
-    monkeypatch.setattr(cli.CoreRunStore, "write", lambda self, record: (_ for _ in ()).throw(OSError("write failed")))
+    monkeypatch.setattr(
+        cli.CoreRunStore,
+        "write",
+        lambda self, record: (_ for _ in ()).throw(OSError("write failed")),
+    )
 
     result = runner.invoke(app, ["serve", "--data-dir", str(data_dir)])
 
@@ -471,9 +475,7 @@ def test_stop_signals_core_when_owner_claim_is_held(
     assert signaled[0] == (9876, cli.signal.SIGTERM)
 
 
-def test_stop_forces_core_without_sigkill(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_stop_forces_core_without_sigkill(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     store = cli.CoreRunStore(cli.StorageLayout.from_root(tmp_path / "data"))
     claim = store.claim()
     record = cli.CoreRunRecord(
@@ -486,7 +488,7 @@ def test_stop_forces_core_without_sigkill(
     )
     store.write(record)
     signaled: list[tuple[int, int]] = []
-    monkeypatch.delattr(cli.signal, "SIGKILL")
+    monkeypatch.delattr(cli.signal, "SIGKILL", raising=False)
     monkeypatch.setattr(cli.os, "kill", lambda pid, sig: signaled.append((pid, sig)))
     try:
         cli._stop_record(store, record, timeout=0)
@@ -625,7 +627,9 @@ def test_serve_can_explicitly_include_test_adapters(
     assert captured["include_test_adapters"] is True
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="threaded Uvicorn startup is unavailable on Windows CI")
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="threaded Uvicorn startup is unavailable on Windows CI"
+)
 def test_status_prints_public_response(http_server_url: str) -> None:
     result = runner.invoke(app, ["status", "--url", http_server_url])
 

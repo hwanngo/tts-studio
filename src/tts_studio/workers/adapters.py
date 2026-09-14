@@ -177,9 +177,7 @@ def _discover_active_worker(root: Path, definition: _WorkerDefinition) -> Path |
     environment = generation_root / "venv"
     if not _unredirected_directory(environment):
         raise UnsafeStoragePathError("active runtime environment is unsafe")
-    executable = environment / (
-        "Scripts" if os.name == "nt" else "bin"
-    ) / definition.executable
+    executable = environment / ("Scripts" if os.name == "nt" else "bin") / definition.executable
     if os.name == "nt" and not executable.exists():
         executable = executable.with_suffix(".exe")
     if not _verified_installed_worker(executable, definition):
@@ -207,9 +205,7 @@ def _source_descriptor(
     )
 
 
-def _installed_descriptor(
-    definition: _WorkerDefinition, executable: Path
-) -> AdapterDescriptor:
+def _installed_descriptor(definition: _WorkerDefinition, executable: Path) -> AdapterDescriptor:
     return AdapterDescriptor(
         engine_id=definition.engine_id,
         priority=definition.priority,
@@ -228,7 +224,7 @@ def _verified_local_project(project: Path, definition: _WorkerDefinition) -> boo
         document = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         project_metadata = document["project"]
         scripts = project_metadata["scripts"]
-    except (KeyError, TypeError, UnicodeError, OSError, tomllib.TOMLDecodeError):
+    except KeyError, TypeError, UnicodeError, OSError, tomllib.TOMLDecodeError:
         return False
     return bool(
         project_metadata.get("name") == definition.distribution
@@ -264,9 +260,7 @@ def _path_candidates(directory: Path, executable_name: str) -> tuple[Path, ...]:
     if os.name == "nt":
         extensions = os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep)
         names.extend(
-            f"{executable_name}{extension.lower()}"
-            for extension in extensions
-            if extension
+            f"{executable_name}{extension.lower()}" for extension in extensions if extension
         )
     return tuple(directory / name for name in dict.fromkeys(names))
 
@@ -305,7 +299,11 @@ def _verified_installed_worker(candidate: Path, definition: _WorkerDefinition) -
         return False
     for dependency_name, expected_version in definition.dependency_versions:
         dependency = distributions.get(_normalized_distribution_name(dependency_name))
-        if dependency is None or dependency.version != expected_version or not _is_uv_artifact(dependency):
+        if (
+            dependency is None
+            or dependency.version != expected_version
+            or not _is_uv_artifact(dependency)
+        ):
             return False
     return _matches_environment_interpreter(candidate, environment_root)
 
@@ -315,11 +313,7 @@ def _site_packages(environment_root: Path) -> tuple[Path, ...]:
     lib_directory = environment_root / "lib"
     if lib_directory.is_dir() and not lib_directory.is_symlink():
         candidates.extend(lib_directory.glob("python*/site-packages"))
-    return tuple(
-        candidate
-        for candidate in candidates
-        if _unredirected_directory(candidate)
-    )
+    return tuple(candidate for candidate in candidates if _unredirected_directory(candidate))
 
 
 def _distributions(site_packages: tuple[Path, ...]) -> dict[str, metadata.Distribution]:
@@ -339,10 +333,12 @@ def _is_uv_artifact(distribution: metadata.Distribution) -> bool:
         return False
     try:
         document: Any = json.loads(direct_url)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return False
-    return isinstance(document, dict) and isinstance(document.get("url"), str) and isinstance(
-        document.get("archive_info"), dict
+    return (
+        isinstance(document, dict)
+        and isinstance(document.get("url"), str)
+        and isinstance(document.get("archive_info"), dict)
     )
 
 
@@ -364,7 +360,7 @@ def _matches_environment_interpreter(candidate: Path, environment_root: Path) ->
             interpreter = Path(lines[0].removeprefix("#!").strip().split(maxsplit=1)[0])
             return interpreter.resolve(strict=True) == expected_resolved
         return False
-    except (OSError, IndexError, UnicodeError, ValueError):
+    except OSError, IndexError, UnicodeError, ValueError:
         return False
 
 

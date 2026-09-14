@@ -32,6 +32,7 @@ dev = [
     "mypy-protobuf>=5.1.0",
     "pytest",
     "pytest-asyncio",
+    "pytest-cov>=7.1.0",
     "ruff",
     "tts-studio-worker-sdk==0.1.0",
     "types-grpcio>=1.83.0.20260730",
@@ -58,6 +59,24 @@ line-length = 100
 [tool.ruff.lint.per-file-ignores]
 "packages/protocol/src/tts_studio_protocol/engine/v1/*_pb2*.py" = ["F401", "I001", "UP009"]
 "packages/protocol/src/tts_studio_protocol/engine/v1/*_pb2*.pyi" = ["I001", "UP007", "UP035", "UP036", "UP040"]
+
+[tool.ruff.format]
+# Generator-owned output is validated byte-for-byte by the drift checks.
+exclude = [
+    "packages/protocol/src/tts_studio_protocol/engine/v1/*_pb2*.py",
+    "packages/protocol/src/tts_studio_protocol/engine/v1/*_pb2*.pyi",
+    "src/tts_studio/generated/api.py",
+]
+
+[tool.coverage.run]
+source = ["tts_studio"]
+relative_files = true
+
+[tool.coverage.report]
+fail_under = 83
+precision = 2
+show_missing = true
+
 
 [tool.mypy]
 python_version = "3.14"

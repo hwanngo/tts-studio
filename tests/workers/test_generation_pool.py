@@ -297,7 +297,10 @@ async def test_align_rejects_unadvertised_or_malformed_runtime_responses() -> No
             stub=MalformedStub(),
             token="worker-token",
             capabilities=WorkerCapabilities(
-                "fake", "0.2.0", frozenset({"alignment"}), 1,
+                "fake",
+                "0.2.0",
+                frozenset({"alignment"}),
+                1,
                 AlignmentCapability(("word",), ("und",), "fake-aligner/1.0"),
             ),
         ),
@@ -370,7 +373,8 @@ def test_synthesis_request_builder_selects_exactly_one_voice_source() -> None:
 
 @pytest.mark.asyncio
 async def test_failed_replica_does_not_fail_waiters_for_a_healthy_sibling(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import tts_studio.workers.supervisor as supervision
 
@@ -412,10 +416,14 @@ async def test_concurrent_stream_close_waits_for_the_same_native_cleanup() -> No
             await release.wait()
             return engine_pb2.UnloadModelResponse(unloaded=True)
 
-    worker = cast(WorkerProcess, SimpleNamespace(
-        stub=DelayedUnload(), token="secret",
-        capabilities=WorkerCapabilities("fake", "0.2.0", frozenset(), 1),
-    ))
+    worker = cast(
+        WorkerProcess,
+        SimpleNamespace(
+            stub=DelayedUnload(),
+            token="secret",
+            capabilities=WorkerCapabilities("fake", "0.2.0", frozenset(), 1),
+        ),
+    )
     lease = GrpcWorkerLease(worker)
     await lease.load_model(_model())
     stream = lease.synthesize(build_synthesis_request(_model().id, "text", voice_id="fake-neutral"))
@@ -432,23 +440,26 @@ async def test_concurrent_stream_close_waits_for_the_same_native_cleanup() -> No
 
 @pytest.mark.asyncio
 async def test_uncooperative_cancellation_terminates_worker_before_capacity_reuse(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
     worker = await supervisor.start("fake", _FAKE_WORKER_LAUNCH)
 
     async def stuck_unload(*args, **kwargs):
-        return engine_pb2.UnloadModelResponse(error=engine_pb2.WorkerError(
-            code="synthesis_busy", message="native inference is still active"
-        ))
+        return engine_pb2.UnloadModelResponse(
+            error=engine_pb2.WorkerError(
+                code="synthesis_busy", message="native inference is still active"
+            )
+        )
 
     monkeypatch.setattr(worker.stub, "UnloadModel", stuck_unload)
     try:
         async with supervisor.acquire(_model()) as lease:
             await lease.load_model(_model())
-            stream = lease.synthesize(build_synthesis_request(
-                _model().id, "long " * 1000, voice_id="fake-neutral"
-            ))
+            stream = lease.synthesize(
+                build_synthesis_request(_model().id, "long " * 1000, voice_id="fake-neutral")
+            )
             assert (await anext(stream)).HasField("header")
             await stream.aclose()
             assert worker.process.returncode is not None
@@ -457,9 +468,12 @@ async def test_uncooperative_cancellation_terminates_worker_before_capacity_reus
                 await asyncio.sleep(0.02)
         async with supervisor.acquire(_model()) as replacement:
             await replacement.load_model(_model())
-            events = [event async for event in replacement.synthesize(build_synthesis_request(
-                _model().id, "replacement", voice_id="fake-neutral"
-            ))]
+            events = [
+                event
+                async for event in replacement.synthesize(
+                    build_synthesis_request(_model().id, "replacement", voice_id="fake-neutral")
+                )
+            ]
             assert events[-1].HasField("result")
     finally:
         await supervisor.stop_all()
@@ -529,9 +543,7 @@ async def test_loading_refreshes_supervisor_and_lease_capabilities(tmp_path: Pat
             engine_id="fake",
             stub=stub,
             token="worker-token",
-            capabilities=WorkerCapabilities(
-                "fake", "0.2.0", frozenset({"streaming_synthesis"}), 1
-            ),
+            capabilities=WorkerCapabilities("fake", "0.2.0", frozenset({"streaming_synthesis"}), 1),
         ),
     )
     supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=1)
@@ -628,7 +640,9 @@ async def test_load_clears_stale_startup_alignment_capability() -> None:
             del request, metadata, timeout
             return engine_pb2.DescribeResponse(
                 protocol=engine_pb2.ProtocolVersion(major=1, minor=0),
-                engine_id="fake", engine_version="0.2.0", max_concurrency=1
+                engine_id="fake",
+                engine_version="0.2.0",
+                max_concurrency=1,
             )
 
     worker = cast(
@@ -637,7 +651,10 @@ async def test_load_clears_stale_startup_alignment_capability() -> None:
             stub=ModelCapabilityStub(),
             token="worker-token",
             capabilities=WorkerCapabilities(
-                "fake", "0.2.0", frozenset(), 1,
+                "fake",
+                "0.2.0",
+                frozenset(),
+                1,
                 AlignmentCapability(("word",), ("vi",), "stale-aligner"),
             ),
         ),

@@ -76,9 +76,7 @@ class _DeadlineDisconnectContext(_DisconnectContext):
 
 
 def _worker_type():
-    return importlib.import_module(
-        "tts_studio_vieneu_worker.service"
-    ).VieNeuEngineWorker
+    return importlib.import_module("tts_studio_vieneu_worker.service").VieNeuEngineWorker
 
 
 class _FakeVieneu:
@@ -367,7 +365,9 @@ async def test_model_lifecycle_rpcs_load_and_discover_runtime_presets(tmp_path: 
         engine_pb2.LoadModelRequest(model_id="model-1", cache_path="models/one", variant="int8"),
         _Context("secret"),
     )
-    voices = await worker.ListVoices(engine_pb2.ListVoicesRequest(model_id="model-1"), _Context("secret"))
+    voices = await worker.ListVoices(
+        engine_pb2.ListVoicesRequest(model_id="model-1"), _Context("secret")
+    )
     unloaded = await worker.UnloadModel(
         engine_pb2.UnloadModelRequest(model_id="model-1"), _Context("secret")
     )
@@ -418,9 +418,7 @@ async def test_download_and_synthesis_fail_closed_until_runtime_is_implemented(
     ]
     synthesis_events = [
         event
-        async for event in worker.Synthesize(
-            engine_pb2.SynthesizeRequest(), _Context("secret")
-        )
+        async for event in worker.Synthesize(engine_pb2.SynthesizeRequest(), _Context("secret"))
     ]
 
     assert download_events[0].error.code == "invalid_request"
@@ -440,7 +438,9 @@ async def test_direct_synthesis_rejects_unsupported_options(tmp_path: Path) -> N
         event
         async for event in worker.Synthesize(
             engine_pb2.SynthesizeRequest(
-                model_id="model-1", voice_id="minh-quan", text="hello",
+                model_id="model-1",
+                voice_id="minh-quan",
+                text="hello",
                 options=engine_pb2.SynthesisOptions(speed=1.0),
             ),
             _Context("secret"),
@@ -467,11 +467,20 @@ async def test_synthesis_streams_strict_pcm_events_and_exact_result(tmp_path: Pa
     ]
 
     assert [event.WhichOneof("payload") for event in events] == [
-        "header", "chunk", "chunk", "progress", "result"
+        "header",
+        "chunk",
+        "chunk",
+        "progress",
+        "result",
     ]
-    assert events[0].header == engine_pb2.AudioHeader(sample_rate_hz=48000, channels=1, sample_format=1)
+    assert events[0].header == engine_pb2.AudioHeader(
+        sample_rate_hz=48000, channels=1, sample_format=1
+    )
     assert [event.chunk.sequence for event in events if event.HasField("chunk")] == [0, 1]
-    assert events[-1].result.total_frames == sum(len(event.chunk.pcm) for event in events if event.HasField("chunk")) // 2
+    assert (
+        events[-1].result.total_frames
+        == sum(len(event.chunk.pcm) for event in events if event.HasField("chunk")) // 2
+    )
     assert events[-1].result.duration_ms == round(events[-1].result.total_frames / 48)
 
 
@@ -536,7 +545,9 @@ async def test_synthesis_maps_sdk_and_audio_failures_without_raw_exceptions(
 
 
 @pytest.mark.asyncio
-async def test_unknown_voice_and_empty_output_are_terminal_validation_errors(tmp_path: Path) -> None:
+async def test_unknown_voice_and_empty_output_are_terminal_validation_errors(
+    tmp_path: Path,
+) -> None:
     _installed_model(tmp_path)
     worker = _worker_type()("secret", tmp_path, vieneu_factory=_FakeVieneu)
     await worker.LoadModel(
@@ -573,7 +584,10 @@ async def test_unknown_voice_and_empty_output_are_terminal_validation_errors(tmp
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("context_type", "code"),
-    [(_CancelAfterFirstChunk, "synthesis_cancelled"), (_DeadlineContext, "synthesis_deadline_exceeded")],
+    [
+        (_CancelAfterFirstChunk, "synthesis_cancelled"),
+        (_DeadlineContext, "synthesis_deadline_exceeded"),
+    ],
 )
 async def test_synthesis_terminates_with_structured_cancellation_or_deadline(
     tmp_path: Path, context_type, code: str
@@ -600,7 +614,10 @@ async def test_synthesis_terminates_with_structured_cancellation_or_deadline(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("context_type", "code"),
-    [(_DisconnectContext, "synthesis_cancelled"), (_DeadlineDisconnectContext, "synthesis_deadline_exceeded")],
+    [
+        (_DisconnectContext, "synthesis_cancelled"),
+        (_DeadlineDisconnectContext, "synthesis_deadline_exceeded"),
+    ],
 )
 async def test_termination_wakes_blocked_synthesis_and_preserves_busy_slot_until_unblocked(
     tmp_path: Path, context_type, code: str

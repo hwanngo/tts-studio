@@ -79,11 +79,7 @@ class DownloadSupervisor:
         timeout: float = 10.0,
     ) -> engine_pb2.ValidateModelResponse:
         del timeout
-        commit = (
-            self.validation_commits.pop(0)
-            if self.validation_commits
-            else self.commit
-        )
+        commit = self.validation_commits.pop(0) if self.validation_commits else self.commit
         return engine_pb2.ValidateModelResponse(
             repository_id=self.validation_repository_id or request.repository_id,
             requested_revision=request.requested_revision,
@@ -344,9 +340,7 @@ async def test_download_persists_only_safe_runtime_capability_facts(tmp_path: Pa
     assert (await service.wait_for_download(queued.id)).state is DownloadState.COMPLETED
 
     with Database(layout.database_path).read() as connection:
-        row = connection.execute(
-            "SELECT capabilities_json FROM engine_installations"
-        ).fetchone()
+        row = connection.execute("SELECT capabilities_json FROM engine_installations").fetchone()
     assert row is not None
     assert json.loads(row["capabilities_json"]) == {
         "supported": ["preset_voices", "streaming_synthesis"],

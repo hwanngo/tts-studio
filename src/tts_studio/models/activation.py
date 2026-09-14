@@ -74,9 +74,7 @@ class RetiredModelDirectory:
 class ModelActivation:
     """Own model staging, verification, atomic renames, and crash cleanup."""
 
-    def __init__(
-        self, layout: StorageLayout, *, storage_limit_bytes: int | None = None
-    ) -> None:
+    def __init__(self, layout: StorageLayout, *, storage_limit_bytes: int | None = None) -> None:
         if storage_limit_bytes is not None and (
             not isinstance(storage_limit_bytes, int)
             or isinstance(storage_limit_bytes, bool)
@@ -120,11 +118,7 @@ class ModelActivation:
                 raise ModelVerificationError()
             reported[relative] = item
         required = tuple(_safe_relative_file(path) for path in required_files)
-        if (
-            not reported
-            or len(required) != len(set(required))
-            or set(required) != set(reported)
-        ):
+        if not reported or len(required) != len(set(required)) or set(required) != set(reported):
             raise ModelVerificationError()
 
         actual_files = self._walk_regular_files(staging)
@@ -224,15 +218,12 @@ class ModelActivation:
         ):
             raise ValueError("storage byte counts must be non-negative integers")
         try:
-            free_bytes = shutil.disk_usage(
-                self._layout.checked_directory("models")
-            ).free
+            free_bytes = shutil.disk_usage(self._layout.checked_directory("models")).free
         except OSError as error:
             raise InsufficientStorageError from error
         projected_bytes = installed_bytes - replacing_bytes + required_bytes
         if free_bytes < required_bytes or (
-            self._storage_limit_bytes is not None
-            and projected_bytes > self._storage_limit_bytes
+            self._storage_limit_bytes is not None and projected_bytes > self._storage_limit_bytes
         ):
             raise InsufficientStorageError
 
@@ -321,9 +312,8 @@ class ModelActivation:
         models_root = self._layout.checked_directory("models")
         for entry in tuple(models_root.iterdir()):
             if (
-                (_UUID_DIRECTORY.fullmatch(entry.name) or _PROMOTION_DIRECTORY.fullmatch(entry.name))
-                and entry.name not in referenced
-            ):
+                _UUID_DIRECTORY.fullmatch(entry.name) or _PROMOTION_DIRECTORY.fullmatch(entry.name)
+            ) and entry.name not in referenced:
                 self._remove_direct_child("models", entry.name)
 
     def _cleanup_vieneu_download_scratch(self) -> None:
@@ -336,7 +326,9 @@ class ModelActivation:
         for entry in tuple(root.iterdir()):
             if not _same_entry_identity(root, root_identity):
                 return
-            if entry.name != ".vieneu-downloads" and not entry.name.startswith(".vieneu-downloads-"):
+            if entry.name != ".vieneu-downloads" and not entry.name.startswith(
+                ".vieneu-downloads-"
+            ):
                 continue
             try:
                 metadata = entry.lstat()
@@ -408,9 +400,7 @@ class ModelActivation:
                 metadata = entry.stat(follow_symlinks=False)
                 if _is_unsafe_entry(metadata):
                     raise ModelVerificationError()
-                relative = _safe_relative_file(
-                    f"{prefix}/{entry.name}" if prefix else entry.name
-                )
+                relative = _safe_relative_file(f"{prefix}/{entry.name}" if prefix else entry.name)
                 if stat.S_ISDIR(metadata.st_mode):
                     os.mkdir(entry.name, mode=0o700, dir_fd=promotion_fd)
                     child_source_fd = _open_directory_fd(entry.name, dir_fd=source_fd)
@@ -480,11 +470,11 @@ class ModelActivation:
                         raise ModelVerificationError()
                     view = view[written:]
             after = os.fstat(source_fd)
-            if (
-                (before.st_dev, before.st_ino, before.st_mode)
-                != (after.st_dev, after.st_ino, after.st_mode)
-                or before.st_size != after.st_size
-            ):
+            if (before.st_dev, before.st_ino, before.st_mode) != (
+                after.st_dev,
+                after.st_ino,
+                after.st_mode,
+            ) or before.st_size != after.st_size:
                 raise ModelVerificationError()
             checksum = digest.hexdigest()
             destination_checksum = _hash_descriptor(destination_fd)
@@ -529,11 +519,12 @@ class ModelActivation:
             ):
                 return None
             return _directory_identity(metadata)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return None
 
     def _walk_regular_files(self, root: Path) -> dict[str, Path]:
         files: dict[str, Path] = {}
+
         def raise_walk_error(error: OSError) -> None:
             raise ModelVerificationError() from error
 
@@ -556,9 +547,7 @@ class ModelActivation:
                 files[_safe_relative_file(relative)] = candidate
         return files
 
-    def _remove_direct_child(
-        self, parent_name: ManagedDirectoryName, identifier: str
-    ) -> None:
+    def _remove_direct_child(self, parent_name: ManagedDirectoryName, identifier: str) -> None:
         parent = self._layout.checked_directory(parent_name)
         path = self._layout.managed_child(parent_name, identifier)
         if not path.exists() and not path.is_symlink():

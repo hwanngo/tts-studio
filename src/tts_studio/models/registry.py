@@ -348,7 +348,9 @@ class ModelRegistry:
             )
             if cursor.rowcount != 1:
                 raise RegistryRecordNotFoundError(f"Model Installation {model_id!r} was not found")
-            row = _required_row(connection.execute("SELECT * FROM model_installations WHERE id = ?", (model_id,)))
+            row = _required_row(
+                connection.execute("SELECT * FROM model_installations WHERE id = ?", (model_id,))
+            )
         return _model_installation(row)
 
     def activate_model(

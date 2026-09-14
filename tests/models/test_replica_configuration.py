@@ -29,18 +29,43 @@ def test_model_replica_configuration_rejects_unsafe_counts(tmp_path: Path, count
 
 def _activate(registry: ModelRegistry) -> None:
     registry.upsert_engine_installation(
-        engine_installation_id="fake@1", engine_id="fake", version="1",
-        command=["fake"], working_directory=".", environment={}, capabilities={}, lifecycle_state="ready",
+        engine_installation_id="fake@1",
+        engine_id="fake",
+        version="1",
+        command=["fake"],
+        working_directory=".",
+        environment={},
+        capabilities={},
+        lifecycle_state="ready",
     )
     job = registry.create_download_job(
-        job_id="download", repository_id="repo", engine_installation_id="fake@1",
-        staging_path="staging/download", correlation_id="correlation",
+        job_id="download",
+        repository_id="repo",
+        engine_installation_id="fake@1",
+        staging_path="staging/download",
+        correlation_id="correlation",
     )
-    for state in (DownloadState.VALIDATING, DownloadState.DOWNLOADING, DownloadState.VERIFYING, DownloadState.ACTIVATING):
+    for state in (
+        DownloadState.VALIDATING,
+        DownloadState.DOWNLOADING,
+        DownloadState.VERIFYING,
+        DownloadState.ACTIVATING,
+    ):
         registry.transition_download_job(job.id, state)
     registry.activate_model(
-        download_job_id=job.id, model_id="model", repository_id="repo", requested_revision=None,
-        resolved_commit="a" * 40, engine_installation_id="fake@1", compatibility_evidence={"engine_id": "fake"},
-        runtime_variant="fp32", manifest={}, checksum_summary={}, byte_size=1, cache_path="models/model",
-        desired_load_state="unloaded", observed_load_state="unloaded", replica_summary={},
+        download_job_id=job.id,
+        model_id="model",
+        repository_id="repo",
+        requested_revision=None,
+        resolved_commit="a" * 40,
+        engine_installation_id="fake@1",
+        compatibility_evidence={"engine_id": "fake"},
+        runtime_variant="fp32",
+        manifest={},
+        checksum_summary={},
+        byte_size=1,
+        cache_path="models/model",
+        desired_load_state="unloaded",
+        observed_load_state="unloaded",
+        replica_summary={},
     )

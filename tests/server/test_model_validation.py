@@ -233,9 +233,7 @@ async def test_worker_compatibility_payload_cannot_expose_a_machine_path(
                 engine_id="fake",
                 engine_version=machine_path,
                 required_files=[machine_path, "config.json"],
-                available_variants=[
-                    engine_pb2.ModelVariant(id="int8", label=machine_path)
-                ],
+                available_variants=[engine_pb2.ModelVariant(id="int8", label=machine_path)],
                 evidence=[
                     engine_pb2.CompatibilityEvidence(code="recognized", message=machine_path)
                 ],

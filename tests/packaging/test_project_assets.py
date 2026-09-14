@@ -48,11 +48,20 @@ def test_web_assets_do_not_request_remote_fonts() -> None:
 @pytest.mark.parametrize(
     ("stylesheet", "expected"),
     [
-        ('@import url("https://fonts.example.test/brand.css");', ("https://fonts.example.test/brand.css",)),
-        ('@font-face { src: url(//cdn.example.test/brand.woff2); }', ("//cdn.example.test/brand.woff2",)),
+        (
+            '@import url("https://fonts.example.test/brand.css");',
+            ("https://fonts.example.test/brand.css",),
+        ),
+        (
+            "@font-face { src: url(//cdn.example.test/brand.woff2); }",
+            ("//cdn.example.test/brand.woff2",),
+        ),
         ('@font-face { src: url("data:font/woff2;base64,AA//AA"); }', ()),
         ('@font-face { src: url("/assets/font//brand.woff2"); }', ()),
-        ("<link href='https://fonts.example.test/brand.css' rel='stylesheet'>", ("https://fonts.example.test/brand.css",)),
+        (
+            "<link href='https://fonts.example.test/brand.css' rel='stylesheet'>",
+            ("https://fonts.example.test/brand.css",),
+        ),
         ("<p>https://fonts.example.test/is-not-an-asset</p>", ()),
     ],
 )
@@ -68,7 +77,7 @@ def test_readme_uses_runtime_model_and_voice_ids() -> None:
     assert "tts models list" in readme
     assert "tts voices list --model <model-installation-id>" in readme
     assert "--model <model-installation-id> --voice <voice-id>" in readme
-    assert '--model vieneu' not in readme
+    assert "--model vieneu" not in readme
     assert '"Adam"' not in readme
 
 

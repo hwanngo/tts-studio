@@ -66,16 +66,15 @@ def _activate_installed_vieneu_shaped_model(registry: ModelRegistry) -> None:
 async def test_installed_vieneu_preset_uses_runtime_voice_and_core_wav_pipeline(
     tmp_path: Path,
 ) -> None:
-    app = create_app(
-        Settings.resolve(tmp_path / ".tts-studio"), include_test_adapters=True
-    )
+    app = create_app(Settings.resolve(tmp_path / ".tts-studio"), include_test_adapters=True)
     database = Database(app.state.storage_layout.database_path)
     database.migrate()
     _activate_installed_vieneu_shaped_model(ModelRegistry(database))
 
-    async with app.router.lifespan_context(app), AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
         voices = await client.get("/api/v1/voices", params={"model_id": "vieneu-installed"})
         assert voices.status_code == 200
         assert voices.json() == [

@@ -99,7 +99,9 @@ class _CancellableSynthesisCall(Protocol):
 class GrpcWorkerLease:
     """Hide generated gRPC stubs and authentication behind WorkerLease."""
 
-    def __init__(self, worker: WorkerProcess, *, hard_stop: Callable[[], Awaitable[None]] | None = None) -> None:
+    def __init__(
+        self, worker: WorkerProcess, *, hard_stop: Callable[[], Awaitable[None]] | None = None
+    ) -> None:
         self._worker = worker
         self.capabilities = worker.capabilities
         self._model_id: str | None = getattr(worker, "loaded_model_id", None)
@@ -138,9 +140,7 @@ class GrpcWorkerLease:
                     _worker_capabilities,
                 )
 
-                expected_engine_id = getattr(
-                    self._worker, "engine_id", self.capabilities.engine_id
-                )
+                expected_engine_id = getattr(self._worker, "engine_id", self.capabilities.engine_id)
                 if facts.protocol.major != 1:
                     raise RuntimeError(
                         f"worker {expected_engine_id!r} uses unsupported protocol major "
@@ -167,7 +167,9 @@ class GrpcWorkerLease:
     async def unload_model(self, model: ModelInstallation) -> None:
         if getattr(self._worker, "terminated", False):
             if self._model_id is not None and self._model_id != model.id:
-                raise WorkerModelMismatchError("operation names a different model than the active lease")
+                raise WorkerModelMismatchError(
+                    "operation names a different model than the active lease"
+                )
             self._model_id = self._worker.loaded_model_id = None
             self._unloaded_model_id = model.id
             return
@@ -187,7 +189,10 @@ class GrpcWorkerLease:
                     self._model_id = None
                     self._worker.loaded_model_id = None
                     raise
-                if self._hard_stop is None or error.code not in {"model_unload_failed", "synthesis_busy"}:
+                if self._hard_stop is None or error.code not in {
+                    "model_unload_failed",
+                    "synthesis_busy",
+                }:
                     raise
                 # A retained transient attempt remains retryable when process
                 # containment proves cleanup, even if the native runtime cannot.
@@ -229,10 +234,7 @@ class GrpcWorkerLease:
 
     async def align(self, request: engine_pb2.AlignRequest) -> engine_pb2.AlignResponse:
         self._ensure_loaded_model(request.model_id)
-        if (
-            not self.capabilities.supports("alignment")
-            or self.capabilities.alignment is None
-        ):
+        if not self.capabilities.supports("alignment") or self.capabilities.alignment is None:
             raise WorkerOperationError(
                 engine_pb2.WorkerError(
                     code="alignment_unavailable",
@@ -255,7 +257,9 @@ class GrpcWorkerLease:
                     retryable=False,
                 )
             )
-        malformed_reason = _alignment_result_error(response.result, request, self.capabilities.alignment)
+        malformed_reason = _alignment_result_error(
+            response.result, request, self.capabilities.alignment
+        )
         if malformed_reason is not None:
             raise WorkerOperationError(
                 engine_pb2.WorkerError(
@@ -325,7 +329,8 @@ class GrpcWorkerLease:
                 while True:
                     response = await self._worker.stub.UnloadModel(
                         engine_pb2.UnloadModelRequest(model_id=model_id),
-                        metadata=self._metadata(), timeout=CANCELLATION_GRACE_SECONDS,
+                        metadata=self._metadata(),
+                        timeout=CANCELLATION_GRACE_SECONDS,
                     )
                     if response.unloaded or response.error.code == "model_not_loaded":
                         break
@@ -470,7 +475,9 @@ def build_synthesis_request(
 
     request = engine_pb2.SynthesizeRequest(model_id=model_id, text=text)
     if provider_config is not None:
-        request.provider.base_url, request.provider.model, request.provider.api_key = provider_config
+        request.provider.base_url, request.provider.model, request.provider.api_key = (
+            provider_config
+        )
     if any(value is not None for value in (speed, pitch, volume)):
         request.options.CopyFrom(
             engine_pb2.SynthesisOptions(

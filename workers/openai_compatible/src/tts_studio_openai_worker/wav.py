@@ -13,7 +13,11 @@ def validate_wav(payload: bytes, *, max_bytes: int = 20 * 1024 * 1024) -> tuple[
         raise ProviderAudioError("provider audio exceeds the response size limit")
     try:
         with wave.open(io.BytesIO(payload), "rb") as source:
-            if source.getnchannels() != 1 or source.getsampwidth() != 2 or source.getframerate() != 48000:
+            if (
+                source.getnchannels() != 1
+                or source.getsampwidth() != 2
+                or source.getframerate() != 48000
+            ):
                 raise ProviderAudioError("provider audio format is unsupported")
             frames = source.getnframes()
             pcm = source.readframes(frames)

@@ -16,7 +16,12 @@ class SavedVoiceRegistry:
         self._database = database
 
     def create(
-        self, *, voice_id: str, model_id: str, label: str, relative_path: str,
+        self,
+        *,
+        voice_id: str,
+        model_id: str,
+        label: str,
+        relative_path: str,
         transcript: str | None,
     ) -> SavedVoice:
         now = _utc_now()
@@ -27,12 +32,16 @@ class SavedVoiceRegistry:
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (voice_id, model_id, label, relative_path, transcript, now, now),
             )
-            row = connection.execute("SELECT * FROM saved_voices WHERE id = ?", (voice_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM saved_voices WHERE id = ?", (voice_id,)
+            ).fetchone()
         return _voice(_required(row))
 
     def get(self, voice_id: str) -> SavedVoice:
         with self._database.read() as connection:
-            row = connection.execute("SELECT * FROM saved_voices WHERE id = ?", (voice_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM saved_voices WHERE id = ?", (voice_id,)
+            ).fetchone()
         if row is None:
             raise SavedVoiceNotFoundError(voice_id)
         return _voice(row)
@@ -46,7 +55,9 @@ class SavedVoiceRegistry:
 
     def delete(self, voice_id: str) -> SavedVoice:
         with self._database.transaction() as connection:
-            row = connection.execute("SELECT * FROM saved_voices WHERE id = ?", (voice_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM saved_voices WHERE id = ?", (voice_id,)
+            ).fetchone()
             voice = _voice(_required(row))
             connection.execute("DELETE FROM saved_voices WHERE id = ?", (voice_id,))
         return voice
@@ -54,9 +65,13 @@ class SavedVoiceRegistry:
 
 def _voice(row: Row) -> SavedVoice:
     return SavedVoice(
-        id=row["id"], model_id=row["model_id"], label=row["label"],
-        relative_path=row["relative_path"], transcript=row["transcript"],
-        created_at=row["created_at"], updated_at=row["updated_at"],
+        id=row["id"],
+        model_id=row["model_id"],
+        label=row["label"],
+        relative_path=row["relative_path"],
+        transcript=row["transcript"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
 
 

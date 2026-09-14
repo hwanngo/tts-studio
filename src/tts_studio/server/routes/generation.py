@@ -117,9 +117,7 @@ async def _open_artifact_for_streaming(
     service: GenerationService,
     artifact_id: str,
 ) -> Any:
-    open_task = asyncio.create_task(
-        asyncio.to_thread(service.open_artifact, artifact_id)
-    )
+    open_task = asyncio.create_task(asyncio.to_thread(service.open_artifact, artifact_id))
     try:
         return await asyncio.shield(open_task)
     except asyncio.CancelledError:
@@ -441,9 +439,7 @@ class VoiceListWorkerErrorApiError(PublicApiError):
         )
 
 
-_NOT_FOUND: dict[int | str, dict[str, Any]] = {
-    int(HTTPStatus.NOT_FOUND): {"model": ErrorEnvelope}
-}
+_NOT_FOUND: dict[int | str, dict[str, Any]] = {int(HTTPStatus.NOT_FOUND): {"model": ErrorEnvelope}}
 _GENERATION_ERRORS: dict[int | str, dict[str, Any]] = {
     int(HTTPStatus.NOT_FOUND): {"model": ErrorEnvelope},
     int(HTTPStatus.UNPROCESSABLE_ENTITY): {"model": ErrorEnvelope},
@@ -524,14 +520,16 @@ async def preview_voice(payload: VoicePreviewRequest, request: Request) -> Respo
     status_code=HTTPStatus.ACCEPTED,
     responses=_GENERATION_ERRORS,
 )
-async def create_generation(
-    payload: GenerationRequest, request: Request
-) -> GenerationJobResponse:
+async def create_generation(payload: GenerationRequest, request: Request) -> GenerationJobResponse:
     if (
         (payload.voice_id is not None and not payload.voice_id)
         or (payload.reference_id is not None and not payload.reference_id)
         or (payload.saved_voice_id is not None and not payload.saved_voice_id)
-        or sum(value is not None for value in (payload.voice_id, payload.reference_id, payload.saved_voice_id)) != 1
+        or sum(
+            value is not None
+            for value in (payload.voice_id, payload.reference_id, payload.saved_voice_id)
+        )
+        != 1
     ):
         raise ReferenceRequestInvalidApiError
     service: GenerationService = request.app.state.generation_service
@@ -544,8 +542,11 @@ async def create_generation(
             text=payload.text,
             retain_artifact=payload.retain_artifact,
             correlation_id=request.state.correlation_id,
-            options=SynthesisOptions(speed=payload.speed, pitch=payload.pitch, volume=payload.volume)
-            if any(value is not None for value in (payload.speed, payload.pitch, payload.volume)) else None,
+            options=SynthesisOptions(
+                speed=payload.speed, pitch=payload.pitch, volume=payload.volume
+            )
+            if any(value is not None for value in (payload.speed, payload.pitch, payload.volume))
+            else None,
         )
     except GenerationModelNotFoundError as error:
         raise GenerationModelNotFoundApiError from error
@@ -611,7 +612,12 @@ async def retry_generation(job_id: str, request: Request) -> GenerationJobRespon
     except GenerationJobNotFoundError as error:
         raise GenerationNotFoundApiError from error
     except GenerationRetryError as error:
-        raise PublicApiError(status_code=HTTPStatus.CONFLICT, code="generation_not_retryable", message=str(error), source="generation") from error
+        raise PublicApiError(
+            status_code=HTTPStatus.CONFLICT,
+            code="generation_not_retryable",
+            message=str(error),
+            source="generation",
+        ) from error
     except GenerationModelNotFoundError as error:
         raise GenerationModelNotFoundApiError from error
     except GenerationVoiceNotFoundError as error:
@@ -675,7 +681,15 @@ async def stream_generation_pcm(job_id: str, request: Request) -> StreamingRespo
         service.get(job_id)
     except GenerationJobNotFoundError as error:
         raise GenerationNotFoundApiError from error
-    return StreamingResponse(stream, media_type="application/octet-stream", headers={"X-Audio-Sample-Rate": "48000", "X-Audio-Channels": "1", "X-Audio-Encoding": "s16le"})
+    return StreamingResponse(
+        stream,
+        media_type="application/octet-stream",
+        headers={
+            "X-Audio-Sample-Rate": "48000",
+            "X-Audio-Channels": "1",
+            "X-Audio-Encoding": "s16le",
+        },
+    )
 
 
 @router.get(

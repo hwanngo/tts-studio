@@ -13,13 +13,18 @@ from tts_studio.providers.service import (
 from tts_studio.storage.db import Database
 
 
-def test_provider_profile_round_trip_never_persists_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_provider_profile_round_trip_never_persists_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     database = Database(tmp_path / "db.sqlite3")
     database.migrate()
     registry = ProviderRegistry(database)
     profile = registry.create(
-        kind="openai_compatible", label="Local", base_url="http://127.0.0.1:9000/v1",
-        model="tts-1", api_key_env="TTS_PROVIDER_KEY",
+        kind="openai_compatible",
+        label="Local",
+        base_url="http://127.0.0.1:9000/v1",
+        model="tts-1",
+        api_key_env="TTS_PROVIDER_KEY",
     )
     assert isinstance(profile, ProviderProfile)
     monkeypatch.setenv("TTS_PROVIDER_KEY", "secret-value")
@@ -50,17 +55,25 @@ def test_provider_profile_rejects_unsafe_base_url(tmp_path: Path, base_url: str)
     database.migrate()
     with pytest.raises(InvalidProviderProfileError):
         ProviderRegistry(database).create(
-            kind="openai_compatible", label="Bad", base_url=base_url,
-            model="tts-1", api_key_env="TTS_PROVIDER_KEY",
+            kind="openai_compatible",
+            label="Bad",
+            base_url=base_url,
+            model="tts-1",
+            api_key_env="TTS_PROVIDER_KEY",
         )
 
 
-def test_missing_provider_secret_is_a_safe_configuration_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_provider_secret_is_a_safe_configuration_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     database = Database(tmp_path / "db.sqlite3")
     database.migrate()
     profile = ProviderRegistry(database).create(
-        kind="openai_compatible", label="Cloud", base_url="https://provider.example/v1",
-        model="tts-1", api_key_env="TTS_PROVIDER_KEY",
+        kind="openai_compatible",
+        label="Cloud",
+        base_url="https://provider.example/v1",
+        model="tts-1",
+        api_key_env="TTS_PROVIDER_KEY",
     )
     monkeypatch.delenv("TTS_PROVIDER_KEY", raising=False)
     with pytest.raises(ProviderSecretMissingError, match="TTS_PROVIDER_KEY"):
@@ -72,12 +85,19 @@ def test_provider_delete_refuses_an_active_generation_pin(tmp_path: Path) -> Non
     database.migrate()
     providers = ProviderRegistry(database)
     profile = providers.create(
-        kind="openai_compatible", label="Cloud", base_url="https://provider.example/v1",
-        model="tts-1", api_key_env="TTS_PROVIDER_KEY",
+        kind="openai_compatible",
+        label="Cloud",
+        base_url="https://provider.example/v1",
+        model="tts-1",
+        api_key_env="TTS_PROVIDER_KEY",
     )
     GenerationRegistry(database).create_job(
-        model_id=f"provider:{profile.id}", engine_id="openai_compatible", voice_id="alloy",
-        provider_id=profile.id, text="hello", correlation_id="correlation",
+        model_id=f"provider:{profile.id}",
+        engine_id="openai_compatible",
+        voice_id="alloy",
+        provider_id=profile.id,
+        text="hello",
+        correlation_id="correlation",
     )
     with pytest.raises(ProviderInUseError):
         providers.delete(profile.id)

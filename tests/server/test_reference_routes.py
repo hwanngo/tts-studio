@@ -21,15 +21,14 @@ from tts_studio.workers.generation import WorkerCapabilities
 
 @pytest.fixture
 async def core(tmp_path: Path):
-    app = create_app(
-        Settings.resolve(tmp_path / ".tts-studio"), include_test_adapters=True
-    )
+    app = create_app(Settings.resolve(tmp_path / ".tts-studio"), include_test_adapters=True)
     database = Database(app.state.storage_layout.database_path)
     database.migrate()
     _activate_model(ModelRegistry(database))
-    async with app.router.lifespan_context(app), AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
         yield app, client
 
 
@@ -132,11 +131,9 @@ async def test_reference_openapi_describes_multipart_and_stable_routes(core: Any
     ]["schema"]
     assert set(request_schema["required"]) == {"model_id", "file"}
     assert "/api/v1/references/{reference_id}" in schema["paths"]
-    assert (
-        schema["paths"]["/api/v1/references/{reference_id}"]["delete"]["responses"]["409"]
-        ["content"]["application/json"]["schema"]
-        == {"$ref": "#/components/schemas/ErrorEnvelope"}
-    )
+    assert schema["paths"]["/api/v1/references/{reference_id}"]["delete"]["responses"]["409"][
+        "content"
+    ]["application/json"]["schema"] == {"$ref": "#/components/schemas/ErrorEnvelope"}
 
 
 @pytest.mark.asyncio

@@ -22,24 +22,28 @@ def _offline_dependency_is_unavailable(result: subprocess.CompletedProcess[str])
 
 
 def test_uv_tool_install_exposes_core_and_service_commands(tmp_path: Path) -> None:
-    distribution_dir = tmp_path / "dist"
+    provided_dist = os.environ.get("TTS_STUDIO_TEST_DIST_DIR")
+    distribution_dir = (
+        Path(provided_dist).resolve(strict=True) if provided_dist else tmp_path / "dist"
+    )
     bin_dir = tmp_path / "bin"
     tool_dir = tmp_path / "tools"
     environment = os.environ.copy()
     environment.pop("MYPYPATH", None)
     environment.pop("PYTHONPATH", None)
 
-    subprocess.run(
-        [
-            sys.executable,
-            str(_BUILD_SCRIPT),
-            "--out-dir",
-            str(distribution_dir),
-        ],
-        cwd=Path(__file__).resolve().parents[2],
-        check=True,
-        env=environment,
-    )
+    if not provided_dist:
+        subprocess.run(
+            [
+                sys.executable,
+                str(_BUILD_SCRIPT),
+                "--out-dir",
+                str(distribution_dir),
+            ],
+            cwd=Path(__file__).resolve().parents[2],
+            check=True,
+            env=environment,
+        )
     root_wheel = next(distribution_dir.glob("tts_studio-*.whl"))
     install = [
         "uv",

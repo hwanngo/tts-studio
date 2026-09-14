@@ -140,9 +140,7 @@ class ModelValidationApiError(PublicApiError):
     def __init__(self, code: str, *, retryable: bool) -> None:
         super().__init__(
             status_code=(
-                HTTPStatus.SERVICE_UNAVAILABLE
-                if retryable
-                else HTTPStatus.UNPROCESSABLE_ENTITY
+                HTTPStatus.SERVICE_UNAVAILABLE if retryable else HTTPStatus.UNPROCESSABLE_ENTITY
             ),
             code=code,
             message="The engine adapter could not validate the model request.",
@@ -218,8 +216,10 @@ def install_error_handlers(
         if api_token is not None and _is_api_request(request):
             authorization = request.headers.get("authorization", "")
             scheme, _, supplied = authorization.partition(" ")
-            if scheme.casefold() != "bearer" or not supplied or not secrets.compare_digest(
-                supplied, api_token
+            if (
+                scheme.casefold() != "bearer"
+                or not supplied
+                or not secrets.compare_digest(supplied, api_token)
             ):
                 return _error_response(
                     request,
@@ -231,7 +231,8 @@ def install_error_handlers(
                     headers={"WWW-Authenticate": "Bearer"},
                 )
         if request.method == "POST" and request.url.path.rstrip("/") in {
-            "/api/v1/generations", "/v1/audio/speech",
+            "/api/v1/generations",
+            "/v1/audio/speech",
         }:
             body = bytearray()
             async for chunk in request.stream():

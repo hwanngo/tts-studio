@@ -9,9 +9,13 @@ from tts_studio.voices.registry import SavedVoiceNotFoundError
 from tts_studio.workers.generation import build_synthesis_request
 
 
-def test_provider_synthesis_request_carries_typed_configuration_without_changing_voice_source() -> None:
+def test_provider_synthesis_request_carries_typed_configuration_without_changing_voice_source() -> (
+    None
+):
     request = build_synthesis_request(
-        "provider/profile-1", "hello", voice_id="alloy",
+        "provider/profile-1",
+        "hello",
+        voice_id="alloy",
         provider_config=("https://provider.example/v1", "tts-1", "secret"),
     )
     assert request.provider.base_url == "https://provider.example/v1"
@@ -25,6 +29,7 @@ async def test_provider_model_without_profile_is_rejected_before_generation(tmp_
     from httpx import ASGITransport, AsyncClient
 
     app = create_app(Settings.resolve(tmp_path / "data"))
+
     class FakeSavedVoices:
         def get(self, voice_id: str) -> object:
             raise SavedVoiceNotFoundError(voice_id)

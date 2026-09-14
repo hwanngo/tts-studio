@@ -6,9 +6,14 @@ from tts_studio.generated.api import ProviderResponse
 
 def test_provider_list_json_uses_core_client(monkeypatch) -> None:
     profile = ProviderResponse(
-        id="provider-one", kind="openai_compatible", label="Local",
-        base_url="http://127.0.0.1:9000/v1", model="tts-1", api_key_env="TTS_PROVIDER_KEY",
-        created_at="2026-09-08T00:00:00Z", updated_at="2026-09-08T00:00:00Z",
+        id="provider-one",
+        kind="openai_compatible",
+        label="Local",
+        base_url="http://127.0.0.1:9000/v1",
+        model="tts-1",
+        api_key_env="TTS_PROVIDER_KEY",
+        created_at="2026-09-08T00:00:00Z",
+        updated_at="2026-09-08T00:00:00Z",
     )
     monkeypatch.setattr("tts_studio.cli.CoreClient.list_providers", lambda self: [profile])
     result = CliRunner().invoke(app, ["providers", "list", "--json"])

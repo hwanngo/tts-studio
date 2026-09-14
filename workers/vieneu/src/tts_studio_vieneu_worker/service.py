@@ -64,7 +64,9 @@ class VieNeuEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
             protocol=engine_pb2.ProtocolVersion(major=PROTOCOL_MAJOR, minor=PROTOCOL_MINOR),
             engine_id=ENGINE_ID,
             engine_version=ENGINE_VERSION,
-            capabilities=[engine_pb2.Capability(name=name, supported=True) for name in capabilities],
+            capabilities=[
+                engine_pb2.Capability(name=name, supported=True) for name in capabilities
+            ],
             max_concurrency=MAX_CONCURRENCY,
         )
 
@@ -179,18 +181,20 @@ class VieNeuEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def Synthesize(
         self,
         request: engine_pb2.SynthesizeRequest,
-        context: grpc.aio.ServicerContext[
-            engine_pb2.SynthesizeRequest, engine_pb2.SynthesisEvent
-        ],
+        context: grpc.aio.ServicerContext[engine_pb2.SynthesizeRequest, engine_pb2.SynthesisEvent],
     ) -> AsyncIterator[engine_pb2.SynthesisEvent]:
         await require_worker_token(context, self._token)
         try:
             if request.HasField("provider"):
-                raise RuntimeFailure("provider_unsupported", "Provider configuration is unsupported by VieNeu")
+                raise RuntimeFailure(
+                    "provider_unsupported", "Provider configuration is unsupported by VieNeu"
+                )
             if request.HasField("options"):
                 for field in ("speed", "pitch", "volume"):
                     if request.options.HasField(field):
-                        raise RuntimeFailure("option_unsupported", f"The {field} option is unsupported by VieNeu")
+                        raise RuntimeFailure(
+                            "option_unsupported", f"The {field} option is unsupported by VieNeu"
+                        )
             if len(request.text) > MAX_SYNTHESIS_TEXT_CHARS:
                 raise RuntimeFailure("input_too_large", "The synthesis input is too large")
             source = request.WhichOneof("voice_source")
@@ -200,7 +204,9 @@ class VieNeuEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
                 self._runtime.validate_reference(
                     request.model_id,
                     request.reference.reference_path,
-                    request.reference.transcript if request.reference.HasField("transcript") else None,
+                    request.reference.transcript
+                    if request.reference.HasField("transcript")
+                    else None,
                 )
             else:
                 self._runtime.engine_for(request.model_id)
@@ -219,6 +225,7 @@ class VieNeuEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
 
         add_done_callback = getattr(context, "add_done_callback", None)
         if callable(add_done_callback):
+
             def on_done(_: object) -> None:
                 cancellation.set()
                 try:
@@ -266,7 +273,9 @@ class VieNeuEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
         try:
             first_kind, first_value = await _next_item(queue, cancellation_wakeup)
             if first_kind == "cancelled":
-                yield engine_pb2.SynthesisEvent(error=_termination_error(context) or _cancelled_error())
+                yield engine_pb2.SynthesisEvent(
+                    error=_termination_error(context) or _cancelled_error()
+                )
                 return
             if first_kind == "error":
                 assert isinstance(first_value, RuntimeFailure)
@@ -274,7 +283,9 @@ class VieNeuEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
                 return
             if first_kind == "done":
                 yield engine_pb2.SynthesisEvent(
-                    error=_runtime_error(RuntimeFailure("invalid_audio", "VieNeu returned no audio"))
+                    error=_runtime_error(
+                        RuntimeFailure("invalid_audio", "VieNeu returned no audio")
+                    )
                 )
                 return
             yield engine_pb2.SynthesisEvent(

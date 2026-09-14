@@ -16,11 +16,7 @@ _WINDOWS = os.name == "nt"
 def consume_worker_token(token_file: Path) -> str:
     """Read and immediately remove one private per-launch credential file."""
     descriptor: int | None = None
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NOINHERIT", 0)
-    )
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NOINHERIT", 0)
     try:
         descriptor = os.open(token_file, flags)
         metadata = os.fstat(descriptor)
@@ -56,8 +52,10 @@ async def require_worker_token[RequestT, ResponseT](
 ) -> None:
     """Abort an RPC unless it presents the per-launch worker token."""
     for key, value in context.invocation_metadata() or ():
-        if key == "x-tts-worker-token" and isinstance(value, str) and secrets.compare_digest(
-            value, expected
+        if (
+            key == "x-tts-worker-token"
+            and isinstance(value, str)
+            and secrets.compare_digest(value, expected)
         ):
             return
 

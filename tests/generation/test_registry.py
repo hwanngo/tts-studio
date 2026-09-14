@@ -48,7 +48,9 @@ def test_generation_options_round_trip_durably(tmp_path: Path) -> None:
     assert registry.get_job(job.id).options == job.options
 
 
-def test_reference_generation_job_round_trips_nullable_voice_and_reference_id(tmp_path: Path) -> None:
+def test_reference_generation_job_round_trips_nullable_voice_and_reference_id(
+    tmp_path: Path,
+) -> None:
     registry = _registry(tmp_path)
 
     job = registry.create_job(

@@ -6,9 +6,9 @@ Python dependencies, tools, and Worker environments use `uv`. Frontend dependenc
 
 The foundation vertical slice, model-management workflow, generation/history, Saved Voices,
 configurable replicas, VieNeu runtime/acquisition, remote providers, UI, CLI, detached/service
-lifecycle, and Worker runtime upgrade/rollback are implemented. Cross-platform release smoke runs
-frontend tests/types/build, locale parity, Python tests/Ruff/mypy, generated-artifact drift checks,
-and distribution checks on Linux x64, macOS ARM64, and Windows x64.
+lifecycle, and Worker runtime upgrade/rollback are implemented. CI runs platform-neutral assurance
+once on Linux, then exercises the same built artifacts and a bounded Core test selection on Linux
+x64, macOS ARM64, and Windows x64.
 Exact commands belong here only after their configuration exists; `pyproject.toml`, package
 scripts, and command help remain the executable source of truth.
 
@@ -28,6 +28,7 @@ quality gate is:
 ```console
 UV_PYTHON=3.14 uv run --python 3.14 pytest tests/models tests/storage tests/workers tests/generation tests/server tests/openapi tests/integration/test_model_management.py tests/integration/test_generation.py tests/integration/test_reference_cloning.py tests/integration/test_vieneu_preset_generation.py tests/integration/test_vieneu_worker_contract.py -q
 UV_PYTHON=3.14 uv run --project workers/fake --frozen pytest workers/fake/tests -q
+UV_PYTHON=3.14 uv run --project workers/openai_compatible --frozen pytest workers/openai_compatible/tests -q
 UV_PYTHON=3.14 uv run --project workers/vieneu --frozen pytest workers/vieneu/tests -q
 UV_PYTHON=3.14 uv run python scripts/check_protocol.py
 UV_PYTHON=3.14 uv run python scripts/check_openapi.py
@@ -59,9 +60,10 @@ POSIX groups or Windows Job Objects; Windows execution remains a platform-specif
 gate. This section intentionally does
 not duplicate the backlog.
 
-The release-smoke workflow runs frontend unit/type/build checks, locale parity, Ruff,
-protocol/OpenAPI drift checks, deterministic tests, and distribution build after locked dependency
-installation. Its mypy step runs `uv run mypy --platform linux` in strict mode and fails on any
+The Linux assurance job runs frontend unit/type/build checks, locale parity, Ruff lint and
+`ruff format --check`, protocol/OpenAPI drift checks, deterministic Core coverage, all three
+locked Worker suites, Chromium browser tests, and one release build. Its mypy step runs
+`uv run mypy --platform linux` in strict mode and fails on any
 diagnostic. All 97 source files in Core, protocol, Worker SDK, and the fake, OpenAI-compatible,
 and VieNeu Workers are checked; the previous 26-error baseline and acceptance script are removed.
 The only external import exclusions are VieNeu's `numpy`, `soundfile`, `huggingface_hub`, and
@@ -90,6 +92,7 @@ Run the Python, protocol, lint, and type checks with:
 
 ```console
 uv run pytest -v
+uv run ruff format --check .
 uv run ruff check .
 uv run mypy --platform linux
 uv run python scripts/check_protocol.py
@@ -182,11 +185,78 @@ command/health hooks for deterministic tests. The real release path uses offline
 and candidate Worker verification; run it with a complete artifact directory and the required
 cached third-party wheels.
 
-The cross-platform release-smoke definition is `.github/workflows/ci.yml`. It
-uses Python 3.14, locked `uv`/Worker/Web dependencies, runs protocol/OpenAPI drift checks, excludes
-credentialed or hardware-only suites, builds the distribution, and checks runtime/service CLI help
-on Linux x64, macOS ARM64, and Windows x64. Migration failure recovery is covered by
-`tests/storage/test_migrations.py`.
+The workflow definition is `.github/workflows/ci.yml`. Its three platform smokes depend on Linux
+assurance and download the same release artifact set; they do not install Node or rebuild Web
+assets. Each runs platform-safe configuration, settings, client, migration, generation registry,
+PCM, CLI, and Worker containment tests. Windows additionally runs the native Job Object test.
+`scripts/ci_artifact_smoke.py` installs the built Core and protocol wheels in a temporary environment
+outside the checkout, using an export of the root lock for third-party dependencies. It verifies
+dependency isolation, `uv pip check`, installed runtime/service help, real HTTP status, and the
+embedded Web page and its JS/CSS. Missing dependencies fail this mandatory smoke instead of
+skipping it. Windows paths and process cleanup live in the Python helper; the matrix's test command
+is a YAML folded scalar valid in both PowerShell and Bash.
+
+The three older installed-distribution fixtures accept `TTS_STUDIO_TEST_DIST_DIR` to reuse an
+existing complete artifact set. Linux CI runs all three with this variable after the one build,
+preserving the deep installed Core/fake-Worker generation, cancellation, recovery, and `uv tool`
+checks. Without the variable, local invocations still build their own artifacts. The optional
+offline VieNeu closure check can still skip when its third-party packages are not cached.
+
+## CI cost, coverage, and dependency updates
+
+Pull requests run CI; pushes run only for `main`, `release/**` branches, and `v*` tags. Ordinary
+feature-branch pushes do not duplicate PR runs. A concurrency group cancels superseded runs of
+the same PR/ref. Linux assurance has a 25-minute timeout; each artifact smoke has 12 minutes.
+The maximum runner allocation drops from three 30-minute jobs to 25 + 3 × 12 = 61 raw runner
+minutes, and the expensive macOS/Windows runners no longer repeat lint, type, Web, browser, or
+Worker checks. Actual billed savings depend on queueing, cache hits, and runner billing weights.
+
+Core line coverage uses locked `pytest-cov` and includes every `tts_studio` module. It intentionally
+does not claim Worker-process or browser coverage. The initial measured macOS/Python 3.14 baseline
+is **83.54%** (8,403 / 10,059 statements), with 846 passing tests and six explicit skips. The
+configured non-regression floor is **83%**, rounded down to a whole percent to allow a small
+platform/timing margin; the first Linux hosted run must confirm this baseline. Raise the floor
+alongside demonstrated increases; changing the source scope or lowering the floor requires an
+explained review. The exact coverage invocation is:
+
+```console
+uv run --frozen pytest -q -m "not e2e and not hardware and not network" --ignore=tests/packaging/test_wheel.py --ignore=tests/packaging/test_tool_install.py --ignore=tests/integration/test_phase3_generation_artifact.py --cov=tts_studio --cov-report=term:skip-covered --cov-report=xml
+```
+
+Those three exclusions prevent repeated production Web builds during coverage collection; all
+three fixtures run separately against built artifacts. Coverage XML is retained for seven days.
+Ruff formatting covers handwritten Python throughout the repository. Only generated
+`packages/protocol/src/tts_studio_protocol/engine/v1/*_pb2*.py`, the corresponding `*.pyi`, and
+`src/tts_studio/generated/api.py` are excluded from formatting; their drift checks remain required.
+
+Chromium verification uses the locked Playwright package and deterministic public-HTTP fixtures:
+
+```console
+pnpm --dir web exec playwright install --with-deps chromium
+pnpm --dir web test:browser
+```
+
+CI uses two browser workers, rejects focused `.only` tests, does not reuse an existing server,
+and retains traces and screenshots on failure plus the HTML report for seven days. Tests cover
+generation, cancellation, runtime capability fixtures, history, Settings, theme/focus, and
+destructive-action pending states. These browser tests mock HTTP responses; real Core behavior is
+covered by Core integration and installed-artifact tests.
+
+Every Action is pinned to a full commit SHA with a release comment. The pins were resolved from
+the upstream release tags and GitHub's verified commit metadata on 2026-09-14; see
+[CI verification](ci-verification.md) for the exact table. `.github/dependabot.yml` groups monthly
+GitHub Actions updates into reviewable PRs with at most two open update PRs. There is no auto-merge
+or privileged update workflow. Before merging an update, review the upstream release/change diff,
+verify the tag's resolved SHA and commit provenance, preserve SHA pinning and minimal permissions,
+and require normal CI. This follows GitHub's guidance on
+[full-length commit pinning](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions)
+and [Dependabot Actions updates](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/keeping-your-actions-up-to-date-with-dependabot).
+
+Validate workflow syntax locally when Go is available:
+
+```console
+go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/ci.yml
+```
 
 ## Preview, options, and History verification
 
@@ -271,6 +341,7 @@ The deterministic contract and relevant Core/Worker suites are run with:
 ```console
 UV_PYTHON=3.14 uv run --python 3.14 pytest tests/references tests/generation tests/server tests/openapi tests/workers tests/integration/test_reference_cloning.py tests/integration/test_generation.py tests/integration/test_vieneu_worker_contract.py -q
 UV_PYTHON=3.14 uv run --project workers/fake --frozen pytest workers/fake/tests -q
+UV_PYTHON=3.14 uv run --project workers/openai_compatible --frozen pytest workers/openai_compatible/tests -q
 UV_PYTHON=3.14 uv run --project workers/vieneu --frozen pytest workers/vieneu/tests -q
 ```
 

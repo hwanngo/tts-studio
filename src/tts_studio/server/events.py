@@ -52,9 +52,7 @@ async def iter_sse_events(
 ) -> AsyncIterator[str]:
     """Read bounded durable batches so slow clients never accumulate an in-memory queue."""
     cursor = (
-        await asyncio.to_thread(store.initial_cursor)
-        if last_event_id is None
-        else last_event_id
+        await asyncio.to_thread(store.initial_cursor) if last_event_id is None else last_event_id
     )
     while True:
         batch = await asyncio.to_thread(

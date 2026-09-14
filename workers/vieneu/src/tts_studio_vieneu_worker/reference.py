@@ -68,40 +68,41 @@ class VieNeuReferenceValidator:
                 raise ReferenceValidationError(
                     "reference_too_large", "The reference audio file is too large"
                 )
-            with os.fdopen(os.dup(file_descriptor), "rb") as stream, sf.SoundFile(
-                stream, mode="r"
-            ) as audio:
-                    sample_rate = int(audio.samplerate)
-                    channels = int(audio.channels)
-                    frames = int(audio.frames)
-                    if sample_rate <= 0 or channels not in {1, 2} or frames <= 0:
-                        raise ReferenceValidationError(
-                            "reference_invalid", "The reference audio metadata is invalid"
-                        )
-                    if frames * channels > _MAX_DECODED_SAMPLES:
-                        raise ReferenceValidationError(
-                            "reference_too_large", "The decoded reference audio is too large"
-                        )
-                    duration = frames / sample_rate
-                    if duration <= 0 or duration > _MAX_DURATION_SECONDS:
-                        raise ReferenceValidationError(
-                            "reference_invalid", "The reference duration must be at most 8 seconds"
-                        )
-                    saw_samples = False
-                    while True:
-                        samples = audio.read(frames=65536, dtype="float32", always_2d=True)
-                        if samples.size == 0:
-                            break
-                        saw_samples = True
-                        if not np.isfinite(samples).all():
-                            raise ReferenceValidationError(
-                                "reference_invalid", "The reference audio samples are invalid"
-                            )
-                    if not saw_samples:
+            with (
+                os.fdopen(os.dup(file_descriptor), "rb") as stream,
+                sf.SoundFile(stream, mode="r") as audio,
+            ):
+                sample_rate = int(audio.samplerate)
+                channels = int(audio.channels)
+                frames = int(audio.frames)
+                if sample_rate <= 0 or channels not in {1, 2} or frames <= 0:
+                    raise ReferenceValidationError(
+                        "reference_invalid", "The reference audio metadata is invalid"
+                    )
+                if frames * channels > _MAX_DECODED_SAMPLES:
+                    raise ReferenceValidationError(
+                        "reference_too_large", "The decoded reference audio is too large"
+                    )
+                duration = frames / sample_rate
+                if duration <= 0 or duration > _MAX_DURATION_SECONDS:
+                    raise ReferenceValidationError(
+                        "reference_invalid", "The reference duration must be at most 8 seconds"
+                    )
+                saw_samples = False
+                while True:
+                    samples = audio.read(frames=65536, dtype="float32", always_2d=True)
+                    if samples.size == 0:
+                        break
+                    saw_samples = True
+                    if not np.isfinite(samples).all():
                         raise ReferenceValidationError(
                             "reference_invalid", "The reference audio samples are invalid"
                         )
-                    container = str(audio.format or extension[1:]).lower()
+                if not saw_samples:
+                    raise ReferenceValidationError(
+                        "reference_invalid", "The reference audio samples are invalid"
+                    )
+                container = str(audio.format or extension[1:]).lower()
         except ReferenceValidationError:
             raise
         except (OSError, ValueError, RuntimeError, sf.SoundFileError) as error:
@@ -156,12 +157,16 @@ class VieNeuReferenceValidator:
             )
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 os.close(descriptor)
-                raise ReferenceValidationError("reference_invalid", "The reference file is unavailable")
+                raise ReferenceValidationError(
+                    "reference_invalid", "The reference file is unavailable"
+                )
             return descriptor
         except ReferenceValidationError:
             raise
         except OSError as error:
-            raise ReferenceValidationError("reference_invalid", "The reference file is unavailable") from error
+            raise ReferenceValidationError(
+                "reference_invalid", "The reference file is unavailable"
+            ) from error
         finally:
             if directory_descriptor >= 0 and directory_descriptor != root_descriptor:
                 os.close(directory_descriptor)
@@ -179,4 +184,6 @@ class VieNeuReferenceValidator:
                 "reference_invalid", "The reference transcript is invalid"
             ) from error
         if not transcript or "\x00" in transcript or len(transcript) > _MAX_TRANSCRIPT_CHARS:
-            raise ReferenceValidationError("reference_invalid", "The reference transcript is invalid")
+            raise ReferenceValidationError(
+                "reference_invalid", "The reference transcript is invalid"
+            )

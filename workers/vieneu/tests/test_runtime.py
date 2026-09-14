@@ -222,7 +222,9 @@ def test_load_with_real_sdk_uses_local_codec_and_cloning_assets_without_hub_down
     monkeypatch.setattr(onnxruntime, "SessionOptions", _SessionOptions)
     monkeypatch.setattr(onnxruntime, "InferenceSession", _Session)
     monkeypatch.setattr(onnxruntime, "get_available_providers", lambda: ["CPUExecutionProvider"])
-    monkeypatch.setattr(onnxruntime, "GraphOptimizationLevel", types.SimpleNamespace(ORT_ENABLE_ALL=1))
+    monkeypatch.setattr(
+        onnxruntime, "GraphOptimizationLevel", types.SimpleNamespace(ORT_ENABLE_ALL=1)
+    )
     monkeypatch.setitem(sys.modules, "tokenizers", types.ModuleType("tokenizers"))
     sys.modules["tokenizers"].Tokenizer = _FakeTokenizer
     monkeypatch.setattr(onnx_runtime_lite.np, "load", lambda path: _Heads())
@@ -390,12 +392,17 @@ def test_load_maps_path_valueerror_to_invalid_request(tmp_path: Path, monkeypatc
     assert error.value.code == "invalid_request"
 
 
-def test_synthesize_uses_only_voice_argument_and_releases_serialization_slot(tmp_path: Path) -> None:
+def test_synthesize_uses_only_voice_argument_and_releases_serialization_slot(
+    tmp_path: Path,
+) -> None:
     model_files(tmp_path)
     runtime = VieNeuRuntime(tmp_path, FakeVieneu)
     runtime.load("model-1", "models/installation", "int8")
 
-    assert next(runtime.synthesize("model-1", "minh-quan", "hello", threading.Event())) == b"\x00\x00\xff\x7f"
+    assert (
+        next(runtime.synthesize("model-1", "minh-quan", "hello", threading.Event()))
+        == b"\x00\x00\xff\x7f"
+    )
 
 
 def test_reference_synthesis_uses_only_reference_arguments(tmp_path: Path) -> None:

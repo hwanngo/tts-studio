@@ -17,15 +17,14 @@ from tts_studio.storage.db import Database
 
 @pytest.fixture
 async def core(tmp_path: Path):
-    app = create_app(
-        Settings.resolve(tmp_path / ".tts-studio"), include_test_adapters=True
-    )
+    app = create_app(Settings.resolve(tmp_path / ".tts-studio"), include_test_adapters=True)
     database = Database(app.state.storage_layout.database_path)
     database.migrate()
     _activate_model(ModelRegistry(database))
-    async with app.router.lifespan_context(app), AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
         yield app, client
 
 
@@ -72,6 +71,7 @@ def _activate_model(registry: ModelRegistry) -> None:
         observed_load_state="unloaded",
         replica_summary={"active_generations": 0},
     )
+
 
 def _wav_bytes() -> bytes:
     stream = io.BytesIO()

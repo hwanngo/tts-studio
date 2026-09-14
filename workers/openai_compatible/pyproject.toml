@@ -21,3 +21,12 @@ tts-studio-worker-sdk = { path = "../../packages/worker-sdk", editable = true }
 
 [tool.uv.build-backend]
 module-name = "tts_studio_openai_worker"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]

@@ -48,7 +48,7 @@ def _cache_prerequisite_reason() -> str | None:
         return "VieNeu cache marker is missing or is not a regular file"
     try:
         provenance = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return "VieNeu cache marker is not valid JSON"
     if not isinstance(provenance, dict):
         return "VieNeu cache marker must contain a JSON object"
@@ -93,7 +93,7 @@ def test_vieneu_real_model_gate_prerequisites_are_explicit() -> None:
 
 def test_vieneu_real_model_variants_reload_offline_and_stream() -> None:
     assert _MODEL_CACHE is not None
-    script = r'''
+    script = r"""
 import asyncio, json, sys
 from pathlib import Path
 import wave
@@ -230,7 +230,7 @@ async def main():
         await server.stop(0)
 
 asyncio.run(main())
-'''
+"""
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
     environment.pop("MYPYPATH", None)

@@ -26,7 +26,8 @@ class _Context:
 async def test_provider_alignment_requires_authentication_and_reports_unavailable() -> None:
     server = grpc.aio.server()
     engine_pb2_grpc.add_EngineWorkerServicer_to_server(
-        worker_service.OpenAICompatibleWorker("worker-token"), server,
+        worker_service.OpenAICompatibleWorker("worker-token"),
+        server,
     )
     port = server.add_insecure_port("127.0.0.1:0")
     await server.start()
@@ -38,7 +39,8 @@ async def test_provider_alignment_requires_authentication_and_reports_unavailabl
             assert rejected.value.code() == grpc.StatusCode.UNAUTHENTICATED
             response = await client.Align(
                 engine_pb2.AlignRequest(),
-                metadata=(("x-tts-worker-token", "worker-token"),), timeout=2,
+                metadata=(("x-tts-worker-token", "worker-token"),),
+                timeout=2,
             )
             assert response.error.code == "alignment_unavailable"
             assert response.error.retryable is False
@@ -64,7 +66,9 @@ class _CancellableContext(_Context):
 
 
 @pytest.mark.asyncio
-async def test_worker_streams_provider_pcm_as_authenticated_protocol_events(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_worker_streams_provider_pcm_as_authenticated_protocol_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     synthesis_requests: list[dict[str, object]] = []
 
     async def fake_synthesize(**kwargs: object) -> ProviderSynthesis:
@@ -83,9 +87,7 @@ async def test_worker_streams_provider_pcm_as_authenticated_protocol_events(monk
 
     assert len(synthesis_requests) == 1
     synthesis_request = dict(synthesis_requests[0])
-    assert isinstance(
-        synthesis_request.pop("cancellation"), provider_http.ProviderCancellation
-    )
+    assert isinstance(synthesis_request.pop("cancellation"), provider_http.ProviderCancellation)
     assert synthesis_request == {
         "base_url": "https://provider.example/v1",
         "api_key": "secret",
@@ -134,9 +136,7 @@ async def test_blocked_dns_cancellation_terminates_rpc_and_quarantines_before_cr
     )
     worker = worker_service.OpenAICompatibleWorker("worker-token")
     context = _CancellableContext()
-    request = engine_pb2.SynthesizeRequest(
-        model_id="provider:one", text="hello", voice_id="alloy"
-    )
+    request = engine_pb2.SynthesizeRequest(model_id="provider:one", text="hello", voice_id="alloy")
     request.provider.base_url = "https://provider.example/v1"
     request.provider.model = "tts-1"
     request.provider.api_key = "secret"

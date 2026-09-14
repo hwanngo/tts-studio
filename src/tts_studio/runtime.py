@@ -132,7 +132,7 @@ class CoreRunStore:
         )
         try:
             _lock_exclusive(descriptor, blocking=False)
-        except (BlockingIOError, OSError):
+        except BlockingIOError, OSError:
             os.close(descriptor)
             raise RuntimeError("Core is already starting or running") from None
         token = uuid4().hex
@@ -202,7 +202,7 @@ class CoreRunStore:
             return None
         try:
             _lock_exclusive(descriptor, blocking=False)
-        except (BlockingIOError, OSError):
+        except BlockingIOError, OSError:
             os.close(descriptor)
             return None
         return descriptor
@@ -212,7 +212,7 @@ class CoreRunStore:
         if descriptor is None:
             try:
                 return self.claim_path.read_text(encoding="ascii").strip() == token
-            except (OSError, UnicodeError):
+            except OSError, UnicodeError:
                 return False
         os.close(descriptor)
         return False
@@ -250,7 +250,7 @@ class CoreRunStore:
             if record.owner_token and current.owner_token != record.owner_token:
                 raise ValueError
             return CoreClaim(descriptor, current.owner_token)
-        except (OSError, ValueError, TypeError, UnicodeError):
+        except OSError, ValueError, TypeError, UnicodeError:
             _unlock(descriptor)
             os.close(descriptor)
             return None
@@ -266,9 +266,15 @@ class CoreRunStore:
             return
         try:
             record = self.read()
-            if record is not None and record.pid == pid and (
-                owner_token is None and not record.owner_token
-                or owner_token is not None and record.owner_token == owner_token
+            if (
+                record is not None
+                and record.pid == pid
+                and (
+                    owner_token is None
+                    and not record.owner_token
+                    or owner_token is not None
+                    and record.owner_token == owner_token
+                )
             ):
                 self.path.unlink(missing_ok=True)
         finally:

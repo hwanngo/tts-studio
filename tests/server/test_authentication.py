@@ -13,7 +13,9 @@ def test_non_loopback_app_requires_a_configured_api_token(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_configured_api_token_protects_public_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_configured_api_token_protects_public_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("TTS_STUDIO_TEST_API_TOKEN", "private-token-value")
     app = create_app(
         Settings(

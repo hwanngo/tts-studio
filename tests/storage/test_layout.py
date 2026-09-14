@@ -34,9 +34,10 @@ def test_ensure_tightens_permissive_managed_directory_modes(tmp_path: Path) -> N
     layout.ensure()
 
     assert stat.S_IMODE(root.stat().st_mode) == 0o700
-    assert all(stat.S_IMODE((root / name).stat().st_mode) == 0o700 for name in (
-        "database", "models", "audio", "voices", "workers", "logs", "run", "staging"
-    ))
+    assert all(
+        stat.S_IMODE((root / name).stat().st_mode) == 0o700
+        for name in ("database", "models", "audio", "voices", "workers", "logs", "run", "staging")
+    )
 
 
 def test_construction_cannot_redirect_a_managed_child(tmp_path: Path) -> None:

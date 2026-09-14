@@ -106,8 +106,11 @@ async def delete_saved_voice(voice_id: str, request: Request) -> None:
 
 def _saved_voice_response(voice: SavedVoice) -> SavedVoiceResponse:
     return SavedVoiceResponse(
-        id=voice.id, model_id=voice.model_id, label=voice.label,
-        transcript_present=voice.transcript is not None, created_at=voice.created_at,
+        id=voice.id,
+        model_id=voice.model_id,
+        label=voice.label,
+        transcript_present=voice.transcript is not None,
+        created_at=voice.created_at,
     )
 
 
@@ -455,9 +458,7 @@ def _response(recording: Any) -> ReferenceResponse:
         transcript_present=recording.transcript_present,
         state=recording.state.value,
         evidence=[
-            ReferenceEvidence(
-                code="worker_validated", message="Validated by the selected Worker."
-            )
+            ReferenceEvidence(code="worker_validated", message="Validated by the selected Worker.")
         ],
         expires_at=recording.expires_at,
     )

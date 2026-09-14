@@ -72,7 +72,8 @@ def test_writer_rejects_substituted_or_modified_pcm(tmp_path: Path, mutation: st
 
 
 def test_writer_does_not_reopen_substituted_wav_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     layout = _layout(tmp_path)
     writer = WavArtifactWriter(layout, "wav-substitution")
@@ -106,8 +107,12 @@ def test_discard_reports_replaced_publication_without_deleting_replacement(tmp_p
     assert destination.read_bytes() == b"replacement"
 
 
-@pytest.mark.parametrize("totals", [{"byte_count": 6, "frame_count": 4}, {"byte_count": 8, "frame_count": 3}])
-def test_finalization_rejects_totals_different_from_validated_pcm(tmp_path: Path, totals: dict[str, int]) -> None:
+@pytest.mark.parametrize(
+    "totals", [{"byte_count": 6, "frame_count": 4}, {"byte_count": 8, "frame_count": 3}]
+)
+def test_finalization_rejects_totals_different_from_validated_pcm(
+    tmp_path: Path, totals: dict[str, int]
+) -> None:
     layout = _layout(tmp_path)
     writer = WavArtifactWriter(layout, "wrong-totals")
     writer.write(b"\x00\x00" * 4)

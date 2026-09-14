@@ -267,9 +267,7 @@ class RuntimeUpgradeManager:
                 },
             )
             venv = final / "venv"
-            self._command_runner(
-                ("uv", "venv", "--python", self._python_executable, "venv"), final
-            )
+            self._command_runner(("uv", "venv", "--python", self._python_executable, "venv"), final)
             selected = tuple(
                 artifact
                 for artifact in artifacts
@@ -498,8 +496,7 @@ def _read_manifest(
         or len(root_sdists) != 1
         or fake_count > 1
         or not all(
-            sum(name.startswith(prefix) for name in names) == 1
-            for prefix in required_prefixes
+            sum(name.startswith(prefix) for name in names) == 1 for prefix in required_prefixes
         )
     ):
         raise RuntimeUpgradeError("Worker manifest artifact set is incomplete")
@@ -591,7 +588,7 @@ def _uv_provenance(distribution: metadata.Distribution) -> bool:
         return False
     try:
         document = json.loads(direct_url)
-    except (TypeError, json.JSONDecodeError):
+    except TypeError, json.JSONDecodeError:
         return False
     return (
         isinstance(document, dict)
