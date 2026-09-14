@@ -113,3 +113,43 @@ the plan's type-baseline task.
 - POSIX signaling continues to fail closed if ownership/process-group identity cannot be
   verified. A kernel or permission failure to terminate remains visible cleanup failure; no
   claim is made that an unkillable process has stopped.
+
+## Task 3 review corrections: shared termination and hard-stop
+
+The Task 3 review reproduced two races in the original commit. Both were addressed test-first.
+
+1. `test_hard_stop_recognizes_reaping_after_watcher_close_is_cancelled` blocks the
+   failure watcher's first `channel.close()`, then requests hard-stop. RED: cancellation
+   allowed cleanup to reap the real Worker and delete its owner record, but hard-stop
+   then raised `verified Worker process-group containment is unavailable`. GREEN:
+   verified termination is recorded on the owned Worker before cleanup removes files
+   or propagates the close cancellation. Hard-stop recognizes that proof and schedules
+   replacement; the regression verifies a new ready PID and ready diagnostics.
+2. `test_concurrent_hard_stop_completion_cannot_replace_new_worker_watcher` controls
+   forced termination completion so a second caller can finish after replacement.
+   RED: the delayed caller replaced the new Worker's registered watcher with a stale
+   watcher. GREEN: concurrent callers share one in-flight hard-stop transaction on
+   the Worker object, and publication revalidates that this same Worker still owns
+   the replica slot. The regression verifies that the new watcher remains registered
+   and running and that only one forced termination reaches the controlled boundary.
+
+Watchers, planned retirement, planned stop, and hard-stop now share a termination task
+per Worker. Only successful verified process/group/Job reaping records termination;
+an absent owner file or a dead PID alone is not accepted as proof. Failed tasks remain
+visible and a later cleanup action can retry them. Caller cancellation cannot cancel
+another caller's shared termination or hard-stop transaction. The underlying POSIX
+identity checks and Windows Job containment are unchanged.
+
+Follow-up validation on macOS:
+
+```console
+uv run pytest -q tests/workers/test_supervisor.py::test_hard_stop_recognizes_reaping_after_watcher_close_is_cancelled tests/workers/test_supervisor.py::test_concurrent_hard_stop_completion_cannot_replace_new_worker_watcher
+uv run pytest -q tests/workers/test_supervisor.py tests/workers/test_generation_pool.py tests/workers/test_windows_containment.py tests/generation tests/integration/test_generation.py
+uv run ruff check src/tts_studio/workers/process.py src/tts_studio/workers/supervisor.py tests/workers/test_supervisor.py
+uv run mypy --platform linux src/tts_studio/workers/process.py src/tts_studio/workers/supervisor.py --follow-imports=silent
+git diff --check
+```
+
+Results: the two new regressions passed; the relevant suite finished with **250 passed,
+4 skipped** in 24.85 seconds. Focused Ruff, focused strict mypy, and diff checks passed.
+Existing native-Windows and optional real-VieNeu verification limitations are unchanged.

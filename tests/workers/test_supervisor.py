@@ -1349,6 +1349,100 @@ async def test_stop_reaps_worker_when_channel_close_raises(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_hard_stop_recognizes_reaping_after_watcher_close_is_cancelled(
+    tmp_path: Path,
+) -> None:
+    supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
+    original = await supervisor.start("fake", _FAKE_WORKER_LAUNCH)
+    real_channel = original.channel
+    close_entered = asyncio.Event()
+
+    class CancelledCloseChannel:
+        first_close = True
+
+        async def close(self) -> None:
+            if self.first_close:
+                self.first_close = False
+                close_entered.set()
+                await asyncio.Event().wait()
+            await real_channel.close()
+
+    original.channel = CancelledCloseChannel()  # type: ignore[assignment]
+    original.process.kill()
+    try:
+        await asyncio.wait_for(close_entered.wait(), 2)
+        await asyncio.wait_for(supervisor.hard_stop(original), 5)
+        assert original.terminated
+        assert original.owner_file is None or not original.owner_file.exists()
+        async with asyncio.timeout(5):
+            while not (status := await supervisor.health("fake")).ready:
+                await asyncio.sleep(0.01)
+        assert status.pid != original.process.pid
+        assert supervisor.startup_diagnostics()["fake"]["status"] == "ready"
+    finally:
+        original.channel = real_channel
+        await real_channel.close()
+        # The RED implementation can lose the owner file despite a verified exit.
+        if original.process.returncode is not None and original.owner_file is not None and not original.owner_file.exists():
+            original.owner_file = None
+        await supervisor.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_hard_stop_completion_cannot_replace_new_worker_watcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
+    original = await supervisor.start("fake", _FAKE_WORKER_LAUNCH)
+    terminate = supervisor_module._terminate_and_reap
+    first_entered, second_entered, release_first, release_second = (
+        asyncio.Event(), asyncio.Event(), asyncio.Event(), asyncio.Event()
+    )
+    calls = 0
+
+    async def controlled_termination(process, owner_file=None, *, force=False):
+        nonlocal calls
+        if process is original.process and force:
+            calls += 1
+            if calls == 1:
+                first_entered.set()
+                await release_first.wait()
+                await terminate(process, owner_file, force=True)
+            else:
+                second_entered.set()
+                await release_second.wait()
+            return
+        await terminate(process, owner_file, force=force)
+
+    monkeypatch.setattr(supervisor_module, "_terminate_and_reap", controlled_termination)
+    first = asyncio.create_task(supervisor.hard_stop(original))
+    await asyncio.wait_for(first_entered.wait(), 2)
+    second = asyncio.create_task(supervisor.hard_stop(original))
+    try:
+        # Give the second caller a deterministic chance to reach the delayed
+        # termination seam; the correct implementation shares the first task.
+        await asyncio.sleep(0.02)
+        release_first.set()
+        await asyncio.wait_for(first, 5)
+        async with asyncio.timeout(5):
+            while not (status := await supervisor.health("fake")).ready:
+                await asyncio.sleep(0.01)
+        assert status.pid != original.process.pid
+        replacement_watcher = supervisor._watch_tasks[("fake", 0)]
+        release_second.set()
+        await asyncio.wait_for(second, 5)
+        assert supervisor._watch_tasks[("fake", 0)] is replacement_watcher
+        assert not replacement_watcher.done()
+        assert not second_entered.is_set(), "concurrent callers must share one termination"
+    finally:
+        release_first.set()
+        release_second.set()
+        await asyncio.gather(first, second, return_exceptions=True)
+        monkeypatch.setattr(supervisor_module, "_terminate_and_reap", terminate)
+        await supervisor.stop_all()
+
+
+@pytest.mark.asyncio
 async def test_repeated_hard_stop_cannot_quarantine_a_replacement(tmp_path: Path) -> None:
     supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
     original = await supervisor.start("fake", _FAKE_WORKER_LAUNCH)

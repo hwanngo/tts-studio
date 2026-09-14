@@ -473,6 +473,7 @@ class WorkerSupervisor:
                 worker.ready_file,
                 worker.token_file,
                 worker.owner_file,
+                worker=worker,
             )
         except Exception as error:  # noqa: BLE001 - cleanup failure exhausts safe replacement
             async with self._lifecycle_lock:
@@ -662,7 +663,7 @@ class WorkerSupervisor:
             errors.append(error)
         terminated = False
         try:
-            await _terminate_and_reap(worker.process, worker.owner_file)
+            await _terminate_owned_worker(worker)
             terminated = True
         except BaseException as error:  # noqa: BLE001
             errors.append(error)
@@ -677,6 +678,19 @@ class WorkerSupervisor:
 
     async def hard_stop(self, worker: WorkerProcess) -> None:
         """Quarantine one owned replica, prove forced exit, then replace it."""
+        async with self._lifecycle_lock:
+            task = worker.hard_stop_task
+            if task is None or _cleanup_task_failed(task):
+                if worker.terminated:
+                    return
+                if self._replicas.get(worker.engine_id, {}).get(worker.replica_id) is not worker:
+                    raise RuntimeError("Worker is no longer owned by this supervisor")
+                task = asyncio.create_task(self._hard_stop_owned_worker(worker))
+                worker.hard_stop_task = task
+        await _await_cleanup_task(task)
+
+    async def _hard_stop_owned_worker(self, worker: WorkerProcess) -> None:
+        """One hard-stop transaction for this Worker object, not its replica ID."""
         key = (worker.engine_id, worker.replica_id)
         async with self._capacity_changed:
             if worker.terminated:
@@ -698,15 +712,19 @@ class WorkerSupervisor:
         if watcher is not None:
             await asyncio.gather(watcher, return_exceptions=True)
         try:
-            await _complete_cleanup(_terminate_and_reap(worker.process, worker.owner_file, force=True))
+            await _terminate_owned_worker(worker, force=True)
         except BaseException:
             async with self._capacity_changed:
-                self._startup_diagnostics[worker.engine_id]["status"] = "failed"
+                if self._replicas.get(worker.engine_id, {}).get(worker.replica_id) is worker:
+                    self._startup_diagnostics[worker.engine_id]["status"] = "failed"
                 self._capacity_changed.notify_all()
             raise
         async with self._capacity_changed:
-            worker.terminated = True
-            if not self._stopping:
+            if (
+                not self._stopping
+                and self._replicas.get(worker.engine_id, {}).get(worker.replica_id) is worker
+            ):
+                self._startup_diagnostics[worker.engine_id]["status"] = "restarting"
                 self._watch_tasks[key] = asyncio.create_task(self._watch_worker(worker))
             self._capacity_changed.notify_all()
 
@@ -799,7 +817,7 @@ class WorkerSupervisor:
             try:
                 reap_results = await asyncio.gather(
                     *(
-                        _terminate_and_reap(worker.process, worker.owner_file)
+                        _terminate_owned_worker(worker)
                         for worker in workers
                     ),
                     return_exceptions=True,
@@ -1429,7 +1447,11 @@ def _grpc_target(host: str, port: int) -> str:
 
 
 async def _complete_cleanup(cleanup: Coroutine[Any, Any, None]) -> None:
-    cleanup_task = asyncio.create_task(cleanup)
+    await _await_cleanup_task(asyncio.create_task(cleanup))
+
+
+async def _await_cleanup_task(cleanup_task: asyncio.Task[None]) -> None:
+    """Every waiter observes completion even when its own cancellation repeats."""
     cancellation: asyncio.CancelledError | None = None
     while not cleanup_task.done():
         try:
@@ -1442,6 +1464,28 @@ async def _complete_cleanup(cleanup: Coroutine[Any, Any, None]) -> None:
         raise cancellation
 
 
+def _cleanup_task_failed(task: asyncio.Task[None]) -> bool:
+    return task.done() and (task.cancelled() or task.exception() is not None)
+
+
+async def _terminate_owned_worker(worker: WorkerProcess, *, force: bool = False) -> None:
+    """Share proof of termination across watchers, hard-stop, and planned stop."""
+    if worker.terminated:
+        return
+    task = worker.termination_task
+    if task is None or _cleanup_task_failed(task):
+        task = asyncio.create_task(_record_owned_termination(worker, force=force))
+        worker.termination_task = task
+    await _await_cleanup_task(task)
+
+
+async def _record_owned_termination(worker: WorkerProcess, *, force: bool) -> None:
+    await _terminate_and_reap(worker.process, worker.owner_file, force=force)
+    # Record the verified result before cleanup can remove its ownership file or
+    # re-raise cancellation from channel.close(). Missing files alone prove nothing.
+    worker.terminated = True
+
+
 async def _cleanup_resources(
     layout: StorageLayout,
     channel: grpc.aio.Channel | None,
@@ -1449,6 +1493,8 @@ async def _cleanup_resources(
     ready_file: Path | None,
     token_file: Path | None,
     owner_file: Path | None = None,
+    *,
+    worker: WorkerProcess | None = None,
 ) -> None:
     errors: list[BaseException] = []
     if channel is not None:
@@ -1459,7 +1505,10 @@ async def _cleanup_resources(
     terminated = process is None
     if process is not None:
         try:
-            await _terminate_and_reap(process, owner_file)
+            if worker is None:
+                await _terminate_and_reap(process, owner_file)
+            else:
+                await _terminate_owned_worker(worker)
             terminated = True
         except BaseException as error:  # noqa: BLE001 - retain ownership record on uncertainty
             errors.append(error)
