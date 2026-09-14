@@ -155,7 +155,12 @@ def create_app(
     api_token = _resolve_api_token(settings.api_token_env)
     if api_token is None and not _is_loopback_host(settings.host):
         raise ValueError("non-loopback Core requires a configured API token")
-    install_error_handlers(app, api_token=api_token)
+    install_error_handlers(
+        app,
+        api_token=api_token,
+        listener_host=settings.host,
+        listener_port=settings.port,
+    )
     app.state.settings = settings
     app.state.storage_layout = layout
     app.state.supervisor = active_supervisor

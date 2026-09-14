@@ -204,6 +204,27 @@ select:focus-visible,
   min-height: 100dvh;
 }
 
+.authentication-gate {
+  display: grid;
+  min-height: calc(100dvh - 2rem);
+  place-items: center;
+  padding: 1rem;
+}
+
+.authentication-card {
+  width: min(100%, 30rem);
+}
+
+.authentication-card form {
+  display: grid;
+  gap: 1rem;
+}
+
+.authentication-card h1,
+.authentication-card p {
+  margin: 0;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;

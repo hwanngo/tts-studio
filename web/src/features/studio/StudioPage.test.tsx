@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import i18n from "../../i18n";
 import type {
@@ -8,11 +8,14 @@ import type {
   ModelInstallationResponse,
   VoiceResponse,
 } from "../../generated/api";
+import { clearBrowserApiToken, setBrowserApiToken } from "../../lib/api";
 import { StudioPage } from "./StudioPage";
 
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
 });
+
+afterEach(() => clearBrowserApiToken());
 
 const systemStatus = {
   version: "0.1.0",
@@ -125,6 +128,12 @@ function installApi(options: {
     if (url.endsWith("/pcm")) {
       return pcmResponses.shift() ?? options.pcmResponse ?? new Response(new Uint8Array([0, 1, 2, 3]), { status: 200 });
     }
+    if (url.includes("/artifacts/") && url.endsWith("/audio")) {
+      return new Response(new Uint8Array([82, 73, 70, 70]), {
+        status: 200,
+        headers: { "Content-Type": "audio/wav" },
+      });
+    }
     throw new Error(`Unexpected request: ${method} ${url}`);
   });
   vi.stubGlobal("fetch", mock);
@@ -188,7 +197,11 @@ test("submits generation, shows live PCM progress, and cancels", async () => {
 
 test("renders finalized WAV playback and download only after completion", async () => {
   const user = userEvent.setup();
-  installApi({
+  const createObjectURL = vi.fn(() => "blob:retained-generation");
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+  setBrowserApiToken("session-secret");
+  const mock = installApi({
     createdJob: job({
       state: "completed",
       artifact_id: "artifact-one",
@@ -198,18 +211,26 @@ test("renders finalized WAV playback and download only after completion", async 
       frame_count: 24000,
     }),
   });
-  render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
+  const view = render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
 
   await user.type(await screen.findByLabelText("Text"), "Finished speech.");
   await user.click(screen.getByRole("button", { name: "Generate speech" }));
 
   const player = await screen.findByLabelText("Finalized speech audio");
-  expect(player).toHaveAttribute("src", "/api/v1/artifacts/artifact-one/audio");
+  expect(player).toHaveAttribute("src", "blob:retained-generation");
   expect(player).toHaveAttribute("preload", "metadata");
   expect(screen.getByRole("link", { name: "Download WAV" })).toHaveAttribute(
     "href",
-    "/api/v1/artifacts/artifact-one/audio",
+    "blob:retained-generation",
   );
+  expect(mock).toHaveBeenCalledWith(
+    "/api/v1/artifacts/artifact-one/audio",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer session-secret" }),
+    }),
+  );
+  view.unmount();
+  expect(revokeObjectURL).toHaveBeenCalledWith("blob:retained-generation");
 });
 
 test("restores the newest generation so retained audio remains replayable", async () => {

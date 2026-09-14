@@ -39,6 +39,15 @@
     "switchToDark": "Switch to dark mode",
     "label": "Theme"
   },
+  "authentication": {
+    "title": "Connect to Core",
+    "description": "Enter the bearer token configured for this Core. It is kept only in this browser tab's memory.",
+    "tokenLabel": "API token",
+    "tokenHint": "The token is never stored or added to a URL.",
+    "connect": "Connect",
+    "connecting": "Connecting…",
+    "failed": "Authentication failed. Check the token and try again."
+  },
   "a11y": {
     "skipToContent": "Skip to main content",
     "primaryNavigation": "Primary navigation",
@@ -71,6 +80,7 @@
     "downloadNotFound": "The download was not found", "downloadFailed": "The download failed", "downloadCancelled": "The download was cancelled", "insufficientStorage": "There is not enough storage", "checksumMismatch": "The downloaded file checksum did not match",
     "generationNotFound": "The generation was not found", "generationFailed": "Generation failed", "generationCancelled": "Generation was cancelled",
     "generationRequestInvalid": "The generation request is invalid",
+    "hostNotAllowed": "The request host is not allowed",
     "revisionNotFound": "The requested revision was not found",
     "modelLoadFailed": "The model could not be loaded",
     "modelUnloadFailed": "The model could not be unloaded",
@@ -85,6 +95,7 @@
     "modelVariantUnavailable": "The model variant is unavailable",
     "internalError": "An internal error occurred",
     "notFound": "The requested resource was not found",
+    "originNotAllowed": "The request origin is not allowed",
     "providerConfigurationMissing": "The provider configuration is missing",
     "providerInUse": "The provider is currently in use",
     "providerNotFound": "The provider was not found",

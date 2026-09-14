@@ -220,9 +220,25 @@ live PCM, or a client-to-Worker connection. Stable VieNeu errors include `model_
 
 ## Network security
 
-The default listener accepts loopback IP literals only and defaults to `127.0.0.1` without auth.
+The default listener accepts loopback IP literals only and defaults to `127.0.0.1:7860` without
+authentication. Every request must carry the configured listener authority in `Host`; an exact
+listener accepts only that authority, while `0.0.0.0` or `::` accepts a numeric address of the same
+IP family on the configured port. DNS names and wrong ports are rejected with `400
+host_not_allowed`. This prevents a DNS-rebinding name from becoming same-origin with the Core.
+
+Browser mutations (`POST`, `PUT`, `PATCH`, and `DELETE`) that include `Origin` must match the exact
+`http` origin formed from the accepted request authority. A mismatch returns `403
+origin_not_allowed`. CLI and native clients remain supported because requests without `Origin` are
+accepted. CORS remains closed by default.
+
 Non-loopback serving requires `TTS_STUDIO_API_TOKEN_ENV` to name a populated environment variable.
 When configured, the Core requires `Authorization: Bearer <token>` on every `/api/*` and `/v1/*`
 request and returns the stable `authentication_failed` envelope for missing or invalid credentials.
-The CLI forwards the same token automatically. CORS is closed by default. Secrets and
-authorization headers are redacted from logs and never returned through settings endpoints.
+The CLI forwards the same token automatically. Static Web assets remain readable so the Web UI can
+bootstrap. On its first `401`, the Web UI asks for the bearer token and keeps it only in the current
+JavaScript runtime; it never writes token values to browser storage or URLs. The session attaches the
+header to JSON operations, PCM and event streams, media reads, and downloads. Protected audio is
+fetched into revocable object URLs for playback and download, and authenticated events use a
+streaming fetch instead of native `EventSource`. Any current-session authentication failure clears
+the in-memory token and reopens the prompt. Secrets and authorization headers are redacted from logs
+and never returned through settings endpoints.

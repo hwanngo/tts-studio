@@ -15,6 +15,18 @@ void i18n.use(initReactI18next).init({
   interpolation: { escapeValue: false },
 });
 
+const storageValues = new Map<string, string>();
+const browserStorage: Storage = {
+  get length() { return storageValues.size; },
+  clear() { storageValues.clear(); },
+  getItem(key) { return storageValues.get(key) ?? null; },
+  key(index) { return [...storageValues.keys()][index] ?? null; },
+  removeItem(key) { storageValues.delete(key); },
+  setItem(key, value) { storageValues.set(key, String(value)); },
+};
+Object.defineProperty(window, "localStorage", { configurable: true, value: browserStorage });
+Object.defineProperty(globalThis, "localStorage", { configurable: true, value: browserStorage });
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
