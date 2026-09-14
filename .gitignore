@@ -12,3 +12,4 @@ web/test-results/
 web/playwright-report/
 .mcp.json
 HANDOFF.md
+.worktrees/
