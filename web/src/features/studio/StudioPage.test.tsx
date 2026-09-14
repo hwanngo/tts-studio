@@ -607,7 +607,7 @@ test("selects a saved voice when the model reports no preset voices", async () =
   mock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/v1/models") return json([model]);
-    if (url === "/api/v1/generations") return json([]);
+    if (url === "/api/v1/generations" && (init?.method ?? "GET") === "GET") return json([]);
     if (url === "/api/v1/runtime") return json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis"] }] });
     if (url === "/api/v1/settings") return json({ retain_audio_by_default: true });
     if (url === "/api/v1/voices?model_id=model-one") return json([]);
@@ -619,10 +619,14 @@ test("selects a saved voice when the model reports no preset voices", async () =
 
   const voiceInput = await screen.findByRole("combobox", { name: "Runtime voice" });
   await waitFor(() => expect(voiceInput).toHaveValue("Saved only (Saved)"));
+  expect(voiceInput).toHaveAccessibleName("Runtime voice");
   await user.type(screen.getByLabelText("Text"), "Saved voice speech.");
-  expect(screen.getByRole("button", { name: "Generate speech" })).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: "Generate speech" }));
+  const generate = screen.getByRole("button", { name: "Generate speech" });
+  expect(generate).toBeEnabled();
+  expect(generate).not.toHaveAttribute("aria-describedby");
+  await user.click(generate);
   await waitFor(() => expect(mock).toHaveBeenCalledWith("/api/v1/generations", expect.objectContaining({ body: expect.stringContaining('"saved_voice_id":"saved-only"') })));
+  expect(await screen.findByText("Generation queued")).toBeVisible();
 });
 
 test("gates generation, cancellation, cues, and prosody from Worker capabilities", async () => {
@@ -639,4 +643,62 @@ test("gates generation, cancellation, cues, and prosody from Worker capabilities
   expect(document.getElementById("speech-text-hint")).toHaveTextContent("Inline delivery cues are unavailable for the selected Worker.");
   expect(screen.getByRole("slider", { name: "Speed" })).toBeDisabled();
   expect(mock.mock.calls.some(([url, init]) => url === "/api/v1/generations" && init?.method === "POST")).toBe(false);
+});
+
+test("recovers Studio generation and cancellation gates after a transient runtime probe", async () => {
+  let runtimeCalls = 0;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "/api/v1/models") return Promise.resolve(json([model]));
+    if (url === "/api/v1/generations" && (init?.method ?? "GET") === "GET") return Promise.resolve(json([job({ state: "generating" })]));
+    if (url === "/api/v1/runtime") {
+      runtimeCalls += 1;
+      return Promise.resolve(runtimeCalls === 1
+        ? json({ error: { code: "request_failed" } }, 503)
+        : json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis", "preset_voices", "synthesis_cancellation"] }] }));
+    }
+    if (url === "/api/v1/settings") return Promise.resolve(json({ retain_audio_by_default: true }));
+    if (url === "/api/v1/voices?model_id=model-one") return Promise.resolve(json(voices));
+    if (url === "/api/v1/saved-voices?model_id=model-one") return Promise.resolve(json([]));
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+  render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
+
+  const generate = await screen.findByRole("button", { name: "Generate speech" });
+  const cancel = await screen.findByRole("button", { name: "Cancel generation" });
+  await waitFor(() => {
+    expect(generate).toBeEnabled();
+    expect(cancel).toBeEnabled();
+  });
+  expect(runtimeCalls).toBeGreaterThanOrEqual(2);
+});
+
+test("preserves a valid selected non-first voice across a catalog refresh", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/v1/models") return Promise.resolve(json([model, { ...model, id: "model-two" }]));
+    if (url === "/api/v1/generations") return Promise.resolve(json([]));
+    if (url === "/api/v1/runtime") return Promise.resolve(json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis", "preset_voices"] }] }));
+    if (url === "/api/v1/settings") return Promise.resolve(json({ retain_audio_by_default: true }));
+    if (url === "/api/v1/voices?model_id=model-one" || url === "/api/v1/voices?model_id=model-two") return Promise.resolve(json(voices));
+    if (url === "/api/v1/saved-voices?model_id=model-one" || url === "/api/v1/saved-voices?model_id=model-two") return Promise.resolve(json([]));
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+  render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
+
+  const voiceInput = await screen.findByRole("combobox", { name: "Runtime voice" });
+  await user.click(within(voiceInput.parentElement!).getByRole("button", { name: "Open options" }));
+  await user.click(screen.getByRole("option", { name: "Warm" }));
+  expect(voiceInput).toHaveValue("Warm");
+  await chooseModel(user, "fixtures/compatible · INT8", 1);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Runtime voice" })).toHaveValue("Warm"));
+});
+
+test("names preset voice capability as the exact generation blocker", async () => {
+  installApi({ runtimeCapabilities: ["streaming_synthesis"] });
+  render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
+
+  expect(await screen.findByText("Generation is unavailable: selected Worker does not support preset voices.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Generate speech" })).toBeDisabled();
 });

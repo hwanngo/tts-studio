@@ -118,7 +118,9 @@ when the selected source can stream (and a preset source also has `preset_voices
 prosody and cue guidance only for their advertised capabilities, enables cancellation only with
 `synthesis_cancellation`, and enables preset preview only with both `streaming_synthesis` and
 `preset_voices`. Unavailable controls remain visibly disabled with localized reasons; the browser
-does not infer a capability from an installed model or Voice catalog entry.
+does not infer a capability from an installed model or Voice catalog entry. A failed or transient
+runtime probe is treated as unknown, shown as a checking state, and retried rather than interpreted
+as an advertised absence of every capability.
 
 The one-off Reference Recording seam is `POST /api/v1/references` (multipart `model_id`, one
 `file`, and optional `transcript`), `DELETE /api/v1/references/{reference_id}`, and

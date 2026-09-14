@@ -356,6 +356,7 @@
     "previewingButton": "Previewing…",
     "previewFailed": "Voice preview failed.",
     "previewUnavailable": "Preview is unavailable: selected Worker does not support preset voice streaming.",
+    "capabilitiesChecking": "Checking selected Worker capabilities.",
     "voicesUnavailable": "Voices are unavailable.",
     "voiceFallback": "voice",
     "defaultSample": "Hello from TTS Studio."
@@ -428,7 +429,9 @@
     "generationStartFailed": "Generation could not be started.",
     "generationCancelFailed": "Generation could not be cancelled.",
     "generationUnavailable": "Generation is unavailable: selected Worker does not support streaming synthesis.",
+    "generationPresetUnavailable": "Generation is unavailable: selected Worker does not support preset voices.",
     "cancellationUnavailable": "Cancellation is unavailable: selected Worker does not support cancellation.",
+    "capabilitiesChecking": "Checking selected Worker capabilities.",
     "voiceDiscoveryFailed": "Voice discovery is unavailable."
   },
   "historyPage": {

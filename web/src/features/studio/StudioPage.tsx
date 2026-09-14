@@ -1,5 +1,5 @@
 import { CheckCircle2, CircleOff, LoaderCircle, WandSparkles } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Alert } from "@/components/ui/alert";
@@ -82,6 +82,7 @@ export function StudioPage({ systemStatus }: StudioPageProps) {
   const { t, i18n } = useTranslation();
   const [models, setModels] = useState<ModelInstallationResponse[]>([]);
   const [runtimeWorkers, setRuntimeWorkers] = useState<WorkerRuntimeResponse[]>([]);
+  const [runtimeFactsState, setRuntimeFactsState] = useState<"loading" | "advertised" | "unknown">("loading");
   const [modelId, setModelId] = useState("");
   const [options, setOptions] = useState(OPTION_DEFAULTS);
   const [changedOptions, setChangedOptions] = useState<Set<OptionName>>(new Set());
@@ -107,6 +108,21 @@ export function StudioPage({ systemStatus }: StudioPageProps) {
   const [pcmStreamCompleteFor, setPcmStreamCompleteFor] = useState<string | null>(null);
   const pcmGenerationToken = useRef(0);
   const pcmChunks = useRef<Uint8Array[]>([]);
+  const runtimeRefreshToken = useRef(0);
+  const refreshRuntimeFacts = useCallback((signal?: AbortSignal) => {
+    const token = runtimeRefreshToken.current + 1;
+    runtimeRefreshToken.current = token;
+    setRuntimeFactsState("loading");
+    return fetchRuntime(signal).then(
+      (value) => {
+        if (!signal?.aborted && runtimeRefreshToken.current === token) {
+          setRuntimeWorkers(Array.isArray(value.workers) ? value.workers : []);
+          setRuntimeFactsState("advertised");
+        }
+      },
+      () => { if (!signal?.aborted && runtimeRefreshToken.current === token) setRuntimeFactsState("unknown"); },
+    );
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -114,10 +130,7 @@ export function StudioPage({ systemStatus }: StudioPageProps) {
       ([installedModels, generations]) => { const availableModels = Array.isArray(installedModels) ? installedModels : []; const availableGenerations = Array.isArray(generations) ? generations : []; const latestGeneration = availableGenerations.reduce<GenerationJobResponse | null>((latest, current) => !latest || current.created_at > latest.created_at ? current : latest, null); setModels(availableModels); setModelId((current) => current || availableModels[0]?.id || ""); setJob((current) => current || latestGeneration); },
       (reason: unknown) => { if (!controller.signal.aborted) setLoadError(localizedMessage(reason, "studioPage.coreOffline")); },
     );
-    fetchRuntime(controller.signal).then(
-      (value) => { if (!controller.signal.aborted) setRuntimeWorkers(Array.isArray(value.workers) ? value.workers : []); },
-      () => undefined,
-    );
+    void refreshRuntimeFacts(controller.signal);
     fetchSettings(controller.signal).then(
       (value) => {
         if (!controller.signal.aborted) {
@@ -130,7 +143,13 @@ export function StudioPage({ systemStatus }: StudioPageProps) {
       () => undefined,
     );
     return () => controller.abort();
-  }, []);
+  }, [refreshRuntimeFacts]);
+
+  useEffect(() => {
+    if (runtimeFactsState !== "unknown") return;
+    const retry = window.setTimeout(() => { void refreshRuntimeFacts(); }, 750);
+    return () => window.clearTimeout(retry);
+  }, [refreshRuntimeFacts, runtimeFactsState]);
 
   useEffect(() => {
     return () => {
@@ -171,7 +190,6 @@ export function StudioPage({ systemStatus }: StudioPageProps) {
 
   useEffect(() => {
     setVoices([]);
-    setVoiceId("");
     setVoiceError(null);
     if (!modelId) { setVoices([]); setVoiceId(""); return; }
     const controller = new AbortController();
@@ -181,12 +199,13 @@ export function StudioPage({ systemStatus }: StudioPageProps) {
         if (!controller.signal.aborted) {
           setVoices(items);
           setVoiceId((current) => items.some((item) => item.id === current) ? current : items[0]?.id || "");
+          void refreshRuntimeFacts();
         }
       },
       (error: unknown) => { if (!controller.signal.aborted) { setVoices([]); setVoiceId(""); setVoiceError(localizedMessage(error, "studioPage.voiceDiscoveryFailed")); } },
     );
     return () => controller.abort();
-  }, [modelId]);
+  }, [modelId, refreshRuntimeFacts]);
 
   useEffect(() => {
     if (!job || !POLLING_STATES.has(job.state)) return;
@@ -227,12 +246,21 @@ export function StudioPage({ systemStatus }: StudioPageProps) {
   const selectedModel = models.find((item) => item.id === modelId);
   const selectedWorker = selectedModel ? runtimeWorkers.find((worker) => worker.engine_id === engineIdForModel(selectedModel)) : undefined;
   const capabilities = new Set(selectedWorker?.capabilities ?? []);
+  const runtimeFactsKnown = runtimeFactsState === "advertised";
   const optionSupported = (name: OptionName) => capabilities.has(name);
   const selectedVoice = voices.find((voice) => voice.id === voiceId);
-  const generationSupported = capabilities.has("streaming_synthesis")
+  const generationSupported = runtimeFactsKnown && Boolean(selectedVoice) && capabilities.has("streaming_synthesis")
     && (selectedVoice?.id.startsWith("saved:") || capabilities.has("preset_voices"));
   const cancellationWorker = job ? runtimeWorkers.find((worker) => worker.engine_id === job.engine_id) : undefined;
-  const cancellationSupported = Boolean(cancellationWorker?.capabilities?.includes("synthesis_cancellation"));
+  const cancellationSupported = runtimeFactsKnown && Boolean(cancellationWorker?.capabilities?.includes("synthesis_cancellation"));
+  const generationReason = !runtimeFactsKnown
+    ? "studioPage.capabilitiesChecking"
+    : !capabilities.has("streaming_synthesis")
+      ? "studioPage.generationUnavailable"
+      : selectedVoice && !selectedVoice.id.startsWith("saved:") && !capabilities.has("preset_voices")
+        ? "studioPage.generationPresetUnavailable"
+        : undefined;
+  const cancellationReason = !runtimeFactsKnown ? "studioPage.capabilitiesChecking" : "studioPage.cancellationUnavailable";
   const setOption = (name: OptionName, value: number) => {
     setOptions((current) => ({ ...current, [name]: value }));
     setChangedOptions((current) => new Set(current).add(name));
@@ -276,13 +304,13 @@ export function StudioPage({ systemStatus }: StudioPageProps) {
       <Card className="studio-panel">
         <div className="section-heading"><div><h2 id="composer-heading">{t("studioPage.setup")}</h2><p>{t("studioPage.setupDescription")}</p></div><Link className="text-link" to="/history">{t("studioPage.viewHistory")}</Link></div>
       <form onSubmit={submit} aria-label={t("studioPage.formLabel")} aria-describedby={formError ? "generation-form-error" : undefined}><fieldset disabled={busy}><legend className="sr-only">{t("studioPage.optionsLegend")}</legend>
-        <Textarea label={t("studioPage.text")} id="speech-text" name="text" placeholder={t("studioPage.textPlaceholder")} rows={10} value={text} onChange={(event) => setText(event.target.value)} hint={`${t("studioPage.textLocal")} ${selectedWorker?.capabilities?.includes("inline_cues") ? t("studioPage.inlineCues") : t("studioPage.inlineCuesUnavailable")}`} />
+        <Textarea label={t("studioPage.text")} id="speech-text" name="text" placeholder={t("studioPage.textPlaceholder")} rows={10} value={text} onChange={(event) => setText(event.target.value)} hint={`${t("studioPage.textLocal")} ${runtimeFactsKnown && selectedWorker?.capabilities?.includes("inline_cues") ? t("studioPage.inlineCues") : !runtimeFactsKnown ? t("studioPage.capabilitiesChecking") : t("studioPage.inlineCuesUnavailable")}`} />
         <div className="prosody-grid" aria-label={t("studioPage.voiceControls")}>
           {(["speed", "pitch", "volume"] as const).map((name) => {
             const supported = optionSupported(name);
             const min = name === "speed" ? 0.25 : name === "pitch" ? -1 : 0;
             const max = name === "speed" ? 4 : name === "pitch" ? 1 : 2;
-            const hint = supported ? t("studioPage.range", { min: min.toFixed(2), max: max.toFixed(2) }) : t("studioPage.unavailableCapability");
+            const hint = supported ? t("studioPage.range", { min: min.toFixed(2), max: max.toFixed(2) }) : !runtimeFactsKnown ? t("studioPage.capabilitiesChecking") : t("studioPage.unavailableCapability");
             return <div className="range-field" key={name}>
               <div className="range-field-label"><label htmlFor={`option-${name}`}>{t(`studioPage.${name}`)}</label><span aria-live="polite" aria-atomic="true">{options[name].toFixed(2)}</span></div>
               <input id={`option-${name}`} name={name} type="range" step="0.05" min={min} max={max} value={options[name]} onChange={(event) => setOption(name, Number(event.target.value))} disabled={!selectedWorker || !supported} aria-describedby={`option-${name}-hint`} />
@@ -324,11 +352,11 @@ export function StudioPage({ systemStatus }: StudioPageProps) {
           />
         </div>
         <label className="checkbox-field"><input type="checkbox" checked={retainArtifact} onChange={(event) => { retentionOverridden.current = true; setRetainArtifact(event.target.checked); }} /> <span>{t("studioPage.keepHistory")}</span><small>{t("studioPage.keepHistoryHint")}</small></label>
-        <div className="generate-row"><div><Button type="submit" disabled={busy || !modelId || !voiceId || !generationSupported} aria-describedby={!generationSupported && modelId && voiceId ? "generation-capability-reason" : undefined}><WandSparkles aria-hidden="true" size={18} /> {t("studioPage.generate")}</Button>{!generationSupported && modelId && voiceId ? <p className="component-field-hint" id="generation-capability-reason">{t("studioPage.generationUnavailable")}</p> : null}</div><p>{models.length === 0 ? t("studioPage.installModel") : t("studioPage.progress")}</p></div>
+        <div className="generate-row"><div><Button type="submit" disabled={busy || !modelId || !voiceId || !generationSupported} aria-describedby={!generationSupported && modelId && voiceId ? "generation-capability-reason" : undefined}><WandSparkles aria-hidden="true" size={18} /> {t("studioPage.generate")}</Button>{!generationSupported && modelId && voiceId && generationReason ? <p className="component-field-hint" id="generation-capability-reason">{t(generationReason)}</p> : null}</div><p>{models.length === 0 ? t("studioPage.installModel") : t("studioPage.progress")}</p></div>
       </fieldset></form>
       {formError ? <Alert id="generation-form-error" variant="error" role="alert">{t(formError.key, formError.values)}</Alert> : null}
       </Card>
     </section>
-    {job ? <section aria-labelledby="generation-heading"><Card className="generation-panel"><div className="section-heading"><div><h2 id="generation-heading">{t("studioPage.current")}</h2><p className="mono-value">{job.id}</p></div>{CANCELLABLE_STATES.has(job.state) ? <div><Button type="button" variant="outline" disabled={busy || job.cancellation_requested || !cancellationSupported} aria-describedby={!cancellationSupported ? "cancellation-capability-reason" : undefined} onClick={cancel}>{job.cancellation_requested ? t("studioPage.cancellationRequested") : t("studioPage.cancel")}</Button>{!cancellationSupported ? <p className="component-field-hint" id="cancellation-capability-reason">{t("studioPage.cancellationUnavailable")}</p> : null}</div> : null}</div><JobStatus job={job} t={t} />{job.state === "generating" ? <><div className="live-pcm-status"><strong>{t("studioPage.livePcm")}</strong><span>{livePcmError ? t(livePcmError.key, livePcmError.values) : t("studioPage.bytesReceived", { bytes: formatNumber(livePcmBytes, i18n.language) })}</span></div><div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{pcmAnnouncement ? t(pcmAnnouncement.key, pcmAnnouncement.values) : null}</div></> : null}{job.error ? <Alert variant="error" role="alert" title={t(errorMessageKey(String(job.error.code ?? "")), { defaultValue: t("studioPage.generationError") })}>{t(errorMessageKey(job.error.code ? String(job.error.code) : undefined), { defaultValue: t("studioPage.generationFailed") })}</Alert> : null}{job.state === "completed" && (retainedArtifactUrl || ephemeralAudioUrl) ? <div className="audio-result"><audio controls preload="metadata" src={retainedArtifactUrl ?? ephemeralAudioUrl ?? undefined} aria-label={t("studioPage.finalizedAudio")}>{t("studioPage.browserAudio")}</audio>{retainedArtifactUrl ? <a className="button-link" href={retainedArtifactUrl} download={`tts-studio-${job.artifact_id ?? job.id}.wav`}>{t("studioPage.downloadWav")}</a> : <span className="muted-copy">{t("studioPage.sessionOnly")}</span>}</div> : null}{job.state === "completed" && !job.artifact_url && !ephemeralAudioUrl ? <p className="muted-copy">{t("studioPage.notRetained")}</p> : null}</Card></section> : null}
+    {job ? <section aria-labelledby="generation-heading"><Card className="generation-panel"><div className="section-heading"><div><h2 id="generation-heading">{t("studioPage.current")}</h2><p className="mono-value">{job.id}</p></div>{CANCELLABLE_STATES.has(job.state) ? <div><Button type="button" variant="outline" disabled={busy || job.cancellation_requested || !cancellationSupported} aria-describedby={!cancellationSupported ? "cancellation-capability-reason" : undefined} onClick={cancel}>{job.cancellation_requested ? t("studioPage.cancellationRequested") : t("studioPage.cancel")}</Button>{!cancellationSupported ? <p className="component-field-hint" id="cancellation-capability-reason">{t(cancellationReason)}</p> : null}</div> : null}</div><JobStatus job={job} t={t} />{job.state === "generating" ? <><div className="live-pcm-status"><strong>{t("studioPage.livePcm")}</strong><span>{livePcmError ? t(livePcmError.key, livePcmError.values) : t("studioPage.bytesReceived", { bytes: formatNumber(livePcmBytes, i18n.language) })}</span></div><div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{pcmAnnouncement ? t(pcmAnnouncement.key, pcmAnnouncement.values) : null}</div></> : null}{job.error ? <Alert variant="error" role="alert" title={t(errorMessageKey(String(job.error.code ?? "")), { defaultValue: t("studioPage.generationError") })}>{t(errorMessageKey(job.error.code ? String(job.error.code) : undefined), { defaultValue: t("studioPage.generationFailed") })}</Alert> : null}{job.state === "completed" && (retainedArtifactUrl || ephemeralAudioUrl) ? <div className="audio-result"><audio controls preload="metadata" src={retainedArtifactUrl ?? ephemeralAudioUrl ?? undefined} aria-label={t("studioPage.finalizedAudio")}>{t("studioPage.browserAudio")}</audio>{retainedArtifactUrl ? <a className="button-link" href={retainedArtifactUrl} download={`tts-studio-${job.artifact_id ?? job.id}.wav`}>{t("studioPage.downloadWav")}</a> : <span className="muted-copy">{t("studioPage.sessionOnly")}</span>}</div> : null}{job.state === "completed" && !job.artifact_url && !ephemeralAudioUrl ? <p className="muted-copy">{t("studioPage.notRetained")}</p> : null}</Card></section> : null}
   </div>;
 }

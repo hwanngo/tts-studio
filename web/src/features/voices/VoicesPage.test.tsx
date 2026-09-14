@@ -183,11 +183,39 @@ test("gates preview with a localized reason when the selected Worker lacks previ
     const url = String(input);
     if (url === "/api/v1/models") return Promise.resolve(json([{ id: "one", repository_id: "fixtures/one", engine_installation_id: "fake@1" }]));
     if (url === "/api/v1/runtime") return Promise.resolve(json({ workers: [{ engine_id: "fake", capabilities: [] }] }));
+    if (url === "/api/v1/voices?model_id=one") return Promise.resolve(json([{ id: "v1", label: "Voice One", capabilities: [] }, { id: "v2", label: "Voice Two", capabilities: [] }]));
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+  render(<VoicesPage />);
+
+  await waitFor(() => expect(screen.getAllByRole("button", { name: /preview/i })).toHaveLength(2));
+  const buttons = screen.getAllByRole("button", { name: /Preview Voice/ });
+  expect(buttons).toHaveLength(2);
+  expect(buttons).toEqual(expect.arrayContaining([expect.any(HTMLButtonElement)]));
+  const descriptions = buttons.map((button) => button.getAttribute("aria-describedby"));
+  expect(descriptions.every((id) => id && document.getElementById(id))).toBe(true);
+  expect(new Set(descriptions).size).toBe(2);
+  for (const button of buttons) expect(button).toBeDisabled();
+  for (const description of descriptions) {
+    expect(document.getElementById(description ?? "")).toHaveTextContent("Preview is unavailable: selected Worker does not support preset voice streaming.");
+  }
+});
+
+test("retries unknown runtime capabilities after voice discovery", async () => {
+  let runtimeCalls = 0;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/v1/models") return Promise.resolve(json([{ id: "one", repository_id: "fixtures/one", engine_installation_id: "fake@1" }]));
+    if (url === "/api/v1/runtime") {
+      runtimeCalls += 1;
+      return Promise.resolve(runtimeCalls === 1 ? json({ error: { code: "request_failed" } }, 503) : json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis", "preset_voices"] }] }));
+    }
     if (url === "/api/v1/voices?model_id=one") return Promise.resolve(json([{ id: "v1", label: "Voice One", capabilities: [] }]));
     throw new Error(`Unexpected request: ${url}`);
   }));
   render(<VoicesPage />);
 
-  expect(await screen.findByText("Preview is unavailable: selected Worker does not support preset voice streaming.")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Preview Voice One" })).toBeDisabled();
+  const preview = await screen.findByRole("button", { name: "Preview Voice One" });
+  await waitFor(() => expect(preview).toBeEnabled());
+  expect(runtimeCalls).toBeGreaterThanOrEqual(2);
 });
