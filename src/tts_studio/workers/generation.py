@@ -488,6 +488,7 @@ def build_synthesis_request(
     if voice_id:
         request.voice_id = voice_id
     else:
+        assert reference_path is not None  # the exclusive voice-source check above requires it
         request.reference.reference_path = reference_path
         if transcript is not None:
             request.reference.transcript = transcript

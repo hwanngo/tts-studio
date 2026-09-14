@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import ModuleType
@@ -104,6 +105,7 @@ def test_build_emits_the_protocol_wheel_with_the_root_release_artifacts(
     )
 
     assert commands == [
+        [sys.executable, str(repository / "scripts" / "sync_release_versions.py"), "--check"],
         ["pnpm", "--dir", "web", "build"],
         [
             "uv",

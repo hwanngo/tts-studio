@@ -44,7 +44,8 @@ def _sdk_factory(*args: object, **kwargs: object) -> Any:
 
     sdk_engine = onnx_runtime_lite.OnnxV3LiteEngine
 
-    class LocalCodecOnnxEngine(sdk_engine):
+    # The optional SDK supplies this runtime-selected base; no static type exists.
+    class LocalCodecOnnxEngine(sdk_engine):  # type: ignore[valid-type,misc]
         def __init__(self, *engine_args: object, **engine_kwargs: object) -> None:
             engine_kwargs["codec_dir"] = codec_dir
             super().__init__(*engine_args, **engine_kwargs)
@@ -69,6 +70,8 @@ def _sdk_reference_signature_supported() -> bool:
 
 
 def _supports_reference_signature(target: object, *, allow_verified_kwargs: bool = False) -> bool:
+    if not callable(target):
+        return False
     try:
         signature = inspect.signature(target)
         parameter_names = set(signature.parameters)
@@ -173,10 +176,10 @@ class VieNeuRuntime:
     def list_voices(self, model_id: str) -> tuple[engine_pb2.PresetVoice, ...]:
         engine = self.engine_for(model_id)
         try:
-            entries: Iterator[object] = iter(engine.list_preset_voices())
+            entries: Iterator[tuple[object, object]] = iter(engine.list_preset_voices())
             voices = []
             for entry in entries:
-                label, voice_id = entry  # type: ignore[misc]
+                label, voice_id = entry
                 voices.append(
                     engine_pb2.PresetVoice(id=str(voice_id), label=str(label), capabilities=["preset"])
                 )

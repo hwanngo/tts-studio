@@ -6,6 +6,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -51,6 +52,11 @@ def build_distribution(
         else None
     )
 
+    subprocess.run(
+        [sys.executable, str(root / "scripts" / "sync_release_versions.py"), "--check"],
+        cwd=root,
+        check=True,
+    )
     subprocess.run([_build_tool("pnpm"), "--dir", "web", "build"], cwd=root, check=True)
 
     static_root = _resolve_repository_path(root, _STATIC_RELATIVE)

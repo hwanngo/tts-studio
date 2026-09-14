@@ -269,6 +269,7 @@ class VieNeuEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
                 yield engine_pb2.SynthesisEvent(error=_termination_error(context) or _cancelled_error())
                 return
             if first_kind == "error":
+                assert isinstance(first_value, RuntimeFailure)
                 yield engine_pb2.SynthesisEvent(error=_runtime_error(first_value))
                 return
             if first_kind == "done":
@@ -304,6 +305,7 @@ class VieNeuEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
                     sequence += 1
                     total_frames += len(pcm) // 2
                 elif kind == "error":
+                    assert isinstance(value, RuntimeFailure)
                     yield engine_pb2.SynthesisEvent(error=_runtime_error(value))
                     return
                 elif kind == "done":
@@ -387,7 +389,9 @@ async def _next_item(
         await asyncio.gather(queue_task, wake_task, return_exceptions=True)
 
 
-def _termination_error(context: grpc.aio.ServicerContext) -> engine_pb2.WorkerError | None:
+def _termination_error(
+    context: grpc.aio.ServicerContext[engine_pb2.SynthesizeRequest, engine_pb2.SynthesisEvent],
+) -> engine_pb2.WorkerError | None:
     time_remaining = getattr(context, "time_remaining", None)
     remaining = time_remaining() if callable(time_remaining) else None
     if remaining is not None and remaining <= 0.005:

@@ -10,9 +10,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from ipaddress import ip_address
 from pathlib import Path
+from types import ModuleType
 from typing import Any, cast
 from uuid import uuid4
 
+fcntl: ModuleType | None
+msvcrt: ModuleType | None
 try:
     import fcntl
 except ImportError:  # pragma: no cover - exercised on Windows

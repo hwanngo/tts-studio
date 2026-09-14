@@ -8,8 +8,8 @@ version = "0.1.0"
 description = "Standalone fake engine worker for TTS Studio integration tests"
 requires-python = ">=3.14"
 dependencies = [
-    "tts-studio-protocol",
-    "tts-studio-worker-sdk",
+    "tts-studio-protocol==0.1.0",
+    "tts-studio-worker-sdk==0.1.0",
 ]
 
 [project.scripts]

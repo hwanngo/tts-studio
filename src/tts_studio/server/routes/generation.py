@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterator
 from http import HTTPStatus
 from threading import Lock
-from typing import Any
+from typing import IO, Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request, Response
@@ -44,7 +45,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class _ArtifactHandleOwner:
-    def __init__(self, handle: Any) -> None:
+    def __init__(self, handle: IO[bytes]) -> None:
         self._handle = handle
         self._close_task: asyncio.Task[None] | None = None
         self._lock = Lock()
@@ -71,7 +72,7 @@ class _ArtifactHandleOwner:
 class _ArtifactStreamingResponse(StreamingResponse):
     def __init__(
         self,
-        handle: Any,
+        handle: IO[bytes] | _ArtifactHandleOwner,
         *,
         start: int = 0,
         length: int | None = None,
@@ -741,7 +742,7 @@ async def head_artifact(artifact_id: str, request: Request) -> Response:
     return await download_artifact(artifact_id, request)
 
 
-def _snapshot_size(handle: Any) -> int:
+def _snapshot_size(handle: IO[bytes] | _ArtifactHandleOwner) -> int:
     position = handle.tell()
     handle.seek(0, 2)
     size = handle.tell()
@@ -781,7 +782,9 @@ def _parse_single_range(value: str | None, size: int) -> tuple[int, int] | None:
     return start, min(end, size - 1)
 
 
-def _stream_artifact(handle: Any, *, start: int = 0, length: int | None = None):
+def _stream_artifact(
+    handle: IO[bytes] | _ArtifactHandleOwner, *, start: int = 0, length: int | None = None
+) -> Iterator[bytes]:
     handle.seek(start)
     remaining = length
     while remaining != 0:

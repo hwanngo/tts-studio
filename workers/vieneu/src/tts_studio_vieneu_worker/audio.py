@@ -14,4 +14,4 @@ def waveform_to_pcm16(samples: object) -> bytes:
         return b""
     clipped = np.clip(array.astype(np.float32, copy=False), -1.0, 1.0)
     pcm = np.rint(clipped * 32767.0).astype("<i2", copy=False)
-    return pcm.tobytes()
+    return bytes(pcm.tobytes())

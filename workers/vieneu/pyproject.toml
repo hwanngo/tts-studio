@@ -8,8 +8,8 @@ version = "0.1.0"
 description = "Standalone VieNeu engine worker for TTS Studio"
 requires-python = ">=3.14"
 dependencies = [
-    "tts-studio-protocol",
-    "tts-studio-worker-sdk",
+    "tts-studio-protocol==0.1.0",
+    "tts-studio-worker-sdk==0.1.0",
     "vieneu==3.6.3",
     "soundfile==0.14.0",
 ]

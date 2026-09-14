@@ -172,13 +172,16 @@ class VieNeuModelService:
         owned_dirs: list[tuple[Path, tuple[int, int]]] = []
         succeeded = False
 
-        def progress(phase: int, downloaded: int, total: int | None, message: str):
+        def progress(
+            phase: engine_pb2.DownloadPhase.ValueType, downloaded: int,
+            total: int | None, message: str,
+        ) -> engine_pb2.DownloadModelEvent:
             nonlocal sequence
             sequence += 1
-            kwargs = {"sequence": sequence, "phase": phase, "bytes_downloaded": downloaded, "message": message}
-            if total is not None:
-                kwargs["total_bytes"] = total
-            return engine_pb2.DownloadModelEvent(progress=engine_pb2.DownloadProgress(**kwargs))
+            return engine_pb2.DownloadModelEvent(progress=engine_pb2.DownloadProgress(
+                sequence=sequence, phase=phase, bytes_downloaded=downloaded,
+                message=message, total_bytes=total,
+            ))
 
         try:
             if request.repository_id != TARGET_REPOSITORY or request.variant not in _VARIANTS:
@@ -352,7 +355,7 @@ class VieNeuModelService:
         missing.extend(name for name in _CLONING_FILES if name not in files)
         return missing
 
-    async def _repository_call(self, function: object, *args: object) -> object:
+    async def _repository_call[T](self, function: Callable[..., T], *args: object) -> T:
         try:
             return await _run_blocking(function, *args)
         except Exception as error:
@@ -535,18 +538,18 @@ def _make_directory_at(parent_fd: int, prefix: str) -> str:
 
 
 def _snapshot_download_in_directory(
-    function: object,
+    function: Callable[[str, str, Path, list[str]], None],
     work_fd: int,
     repo_id: str,
     revision: str,
     destination_name: str,
     allow_patterns: list[str],
-) -> object:
+) -> None:
     with _SNAPSHOT_CWD_LOCK:
         previous_fd = _open_directory_fd(Path("."))
         try:
             os.fchdir(work_fd)
-            return function(repo_id, revision, Path(destination_name), allow_patterns)
+            function(repo_id, revision, Path(destination_name), allow_patterns)
         finally:
             os.fchdir(previous_fd)
             os.close(previous_fd)
@@ -562,11 +565,11 @@ def _remove_workspace_no_follow(work: Path, identity: tuple[int, int], root: Pat
         _remove_tree_no_follow(work)
 
 
-async def _run_blocking(
-    function: object,
+async def _run_blocking[T](
+    function: Callable[..., T],
     *args: object,
     on_detached: Callable[[], None] | None = None,
-) -> object:
+) -> T:
     task = asyncio.create_task(asyncio.to_thread(function, *args))
     try:
         return await asyncio.shield(task)
@@ -583,15 +586,15 @@ async def _run_blocking(
         raise
 
 
-def _consume_blocking_result(task: asyncio.Task[object]) -> None:
+def _consume_blocking_result[T](task: asyncio.Task[T]) -> None:
     try:
         task.result()
     except BaseException:  # noqa: BLE001, S110 - detached SDK thread result is intentionally discarded
         pass
 
 
-def _consume_detached_result(
-    task: asyncio.Task[object], cleanup: Callable[[], None]
+def _consume_detached_result[T](
+    task: asyncio.Task[T], cleanup: Callable[[], None]
 ) -> None:
     _consume_blocking_result(task)
     try:

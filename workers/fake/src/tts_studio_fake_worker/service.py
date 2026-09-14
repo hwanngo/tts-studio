@@ -102,7 +102,7 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def ValidateReference(
         self,
         request: engine_pb2.ValidateReferenceRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[engine_pb2.ValidateReferenceRequest, engine_pb2.ValidateReferenceResponse],
     ) -> engine_pb2.ValidateReferenceResponse:
         await require_worker_token(context, self._token)
         return self._generation_service().validate_reference(request)
@@ -130,7 +130,7 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def LoadModel(
         self,
         request: engine_pb2.LoadModelRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[engine_pb2.LoadModelRequest, engine_pb2.LoadModelResponse],
     ) -> engine_pb2.LoadModelResponse:
         await require_worker_token(context, self._token)
         return self._generation_service().load_model(request)
@@ -138,7 +138,7 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def UnloadModel(
         self,
         request: engine_pb2.UnloadModelRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[engine_pb2.UnloadModelRequest, engine_pb2.UnloadModelResponse],
     ) -> engine_pb2.UnloadModelResponse:
         await require_worker_token(context, self._token)
         return self._generation_service().unload_model(request.model_id)
@@ -146,7 +146,7 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def ListVoices(
         self,
         request: engine_pb2.ListVoicesRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[engine_pb2.ListVoicesRequest, engine_pb2.ListVoicesResponse],
     ) -> engine_pb2.ListVoicesResponse:
         await require_worker_token(context, self._token)
         return self._generation_service().list_voices(request.model_id)
@@ -154,7 +154,7 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def Align(
         self,
         request: engine_pb2.AlignRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[engine_pb2.AlignRequest, engine_pb2.AlignResponse],
     ) -> engine_pb2.AlignResponse:
         await require_worker_token(context, self._token)
         service = self._generation_service()
@@ -227,7 +227,7 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def Synthesize(
         self,
         request: engine_pb2.SynthesizeRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[engine_pb2.SynthesizeRequest, engine_pb2.SynthesisEvent],
     ) -> AsyncIterator[engine_pb2.SynthesisEvent]:
         await require_worker_token(context, self._token)
         service = self._generation_service()
@@ -242,9 +242,10 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
 
         termination_recorded = [False]
         synthesis_completed = [False]
+        # types-grpcio models callbacks as a nominal class rather than a Protocol.
         context.add_done_callback(
-            lambda done_context: self._record_done_termination(
-                done_context, termination_recorded, synthesis_completed
+            lambda context: self._record_done_termination(  # type: ignore[arg-type]
+                context, termination_recorded, synthesis_completed
             )
         )
 
@@ -314,7 +315,7 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
 
     def _record_done_termination(
         self,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[engine_pb2.SynthesizeRequest, engine_pb2.SynthesisEvent],
         termination_recorded: list[bool],
         synthesis_completed: list[bool],
     ) -> None:
@@ -405,7 +406,9 @@ def _alignment_result(
     return result
 
 
-def _termination_error(context: grpc.aio.ServicerContext) -> engine_pb2.WorkerError | None:
+def _termination_error(
+    context: grpc.aio.ServicerContext[engine_pb2.SynthesizeRequest, engine_pb2.SynthesisEvent],
+) -> engine_pb2.WorkerError | None:
     remaining = context.time_remaining()
     if remaining is not None and remaining <= _DEADLINE_WARNING_SECONDS:
         return engine_pb2.WorkerError(

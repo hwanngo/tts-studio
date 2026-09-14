@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol, cast
+from typing import IO, Any, Protocol, cast
 from uuid import uuid4
 
 from tts_studio_protocol.engine.v1 import engine_pb2
@@ -123,11 +123,6 @@ _MAX_ALIGNMENT_TRANSCRIPT = 2_000
 _MAX_ALIGNMENT_UNITS = 10_000
 _MAX_ALIGNMENT_PROTO_BYTES = 1024 * 1024
 _ALIGNMENT_UNITS = frozenset({"word", "phoneme", "character"})
-_PCM_QUEUE_CLOSED_ERRORS = tuple(
-    error
-    for error in (getattr(asyncio, "QueueShutDown", None),)
-    if isinstance(error, type)
-)
 
 
 @dataclass(frozen=True)
@@ -286,6 +281,7 @@ class GenerationService:
             else:
                 _require_preset_capability(lease)
             if reference_id is not None:
+                assert self._reference_service is not None
                 try:
                     claimed = self._reference_service.claim_for_generation(reference_id)
                 except (InvalidReferenceTransitionError, ReferenceRecordNotFoundError) as error:
@@ -467,10 +463,10 @@ class GenerationService:
                 yield chunk
         finally:
             self._remove_pcm_subscriber(job_id, queue)
-            terminated = self._pcm_terminated.get(job_id)
-            if terminated is not None:
-                terminated.discard(queue)
-                if not terminated:
+            terminated_subscribers = self._pcm_terminated.get(job_id)
+            if terminated_subscribers is not None:
+                terminated_subscribers.discard(queue)
+                if not terminated_subscribers:
                     self._pcm_terminated.pop(job_id, None)
 
     def list_history(self) -> tuple[AudioArtifact, ...]:
@@ -539,7 +535,7 @@ class GenerationService:
         handle.close()
         return path
 
-    def open_artifact(self, artifact_id: str):
+    def open_artifact(self, artifact_id: str) -> IO[bytes]:
         """Open an immutable snapshot of a validated artifact for safe client streaming."""
         try:
             artifact = self._get_public_artifact(artifact_id)
@@ -561,7 +557,7 @@ class GenerationService:
         handle.seek(0)
         return digest.hexdigest()
 
-    def _open_validated_artifact(self, artifact: AudioArtifact, path: Path):
+    def _open_validated_artifact(self, artifact: AudioArtifact, path: Path) -> IO[bytes]:
         if (
             not all(hasattr(os, name) for name in ("O_NOFOLLOW", "O_DIRECTORY", "O_CLOEXEC"))
             or os.open not in getattr(os, "supports_dir_fd", ())
@@ -1408,22 +1404,22 @@ class GenerationService:
                     except AudioValidationError as error:
                         raise _GenerationFailure("malformed_pcm", str(error)) from error
                     await queue.put(event.chunk.pcm)
-                    payload = bytes(event.chunk.pcm)
+                    pcm = bytes(event.chunk.pcm)
                     if (
                         not job.retain_artifact
                         and not self._pcm_subscribers.get(job.id)
                         and job.id not in self._pcm_replay_disabled
                     ):
                         replay = self._pcm_replay.setdefault(job.id, bytearray())
-                        if len(replay) + len(payload) <= _EPHEMERAL_REPLAY_MAX_BYTES:
-                            replay.extend(payload)
+                        if len(replay) + len(pcm) <= _EPHEMERAL_REPLAY_MAX_BYTES:
+                            replay.extend(pcm)
                         else:
                             self._pcm_replay.pop(job.id, None)
                             self._pcm_replay_disabled.add(job.id)
                     for subscriber in tuple(self._pcm_subscribers.get(job.id, ())):
                         try:
-                            subscriber.put_nowait(payload)
-                        except (asyncio.QueueFull, RuntimeError, *_PCM_QUEUE_CLOSED_ERRORS):
+                            subscriber.put_nowait(pcm)
+                        except (asyncio.QueueFull, RuntimeError, asyncio.QueueShutDown):
                             self._terminate_pcm_subscriber(job.id, subscriber)
                 elif payload == "progress":
                     self._publish(
@@ -1486,7 +1482,7 @@ class GenerationService:
             subscriber.put_nowait(None)
         except asyncio.QueueFull:
             return
-        except (RuntimeError, *_PCM_QUEUE_CLOSED_ERRORS):
+        except (RuntimeError, asyncio.QueueShutDown):
             self._pcm_terminated[job_id].discard(subscriber)
 
     def _transition(self, job: GenerationJob, state: GenerationState, message: str, **kwargs: Any) -> GenerationJob:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from sqlite3 import Row
+from sqlite3 import Connection, Row
 from uuid import uuid4
 
 from tts_studio.references.domain import (
@@ -168,8 +168,8 @@ def _recording(row: Row) -> ReferenceRecording:
     )
 
 
-def _recording_or_missing(connection: object, reference_id: str) -> ReferenceRecording:
-    row = connection.execute(  # type: ignore[attr-defined]
+def _recording_or_missing(connection: Connection, reference_id: str) -> ReferenceRecording:
+    row = connection.execute(
         "SELECT * FROM reference_recordings WHERE id = ?", (reference_id,)
     ).fetchone()
     if row is None:
@@ -183,7 +183,7 @@ def _required_row(row: Row | None) -> Row:
     return row
 
 
-def _parse_time(value: str) -> object:
+def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value).astimezone(UTC)
 
 

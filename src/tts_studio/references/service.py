@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import BinaryIO
 from uuid import uuid4
 
+from tts_studio_protocol.engine.v1 import engine_pb2
+
 from tts_studio.references.domain import (
     CleanupFailedError,
     InvalidReferenceTransitionError,
@@ -143,7 +145,8 @@ class ReferenceService:
         return descriptor
 
     def mark_validated(
-        self, reference_id: str, metadata: ReferenceMetadata | object, *, now: str | None = None
+        self, reference_id: str, metadata: ReferenceMetadata | engine_pb2.ReferenceMetadata,
+        *, now: str | None = None
     ) -> ReferenceRecording:
         normalized = _metadata(metadata)
         return self._registry.mark_validated(reference_id, normalized, now=now)
@@ -246,7 +249,7 @@ def _chunks(payload: bytes | bytearray | BinaryIO | Iterable[bytes]) -> Iterable
     yield from payload
 
 
-def _metadata(value: ReferenceMetadata | object) -> ReferenceMetadata:
+def _metadata(value: ReferenceMetadata | engine_pb2.ReferenceMetadata) -> ReferenceMetadata:
     if isinstance(value, ReferenceMetadata):
         return value
     metadata = value  # protocol-generated metadata has the same stable fields

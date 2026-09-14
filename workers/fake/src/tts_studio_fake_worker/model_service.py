@@ -518,6 +518,7 @@ class FakeModelService:
     @contextmanager
     def _open_windows_destination(self, identifier: str) -> Iterator[_DirectoryWriter]:
         root_before = self._checked_staging_root()
+        assert self._staging_root is not None
         if _directory_identity(root_before) != self._root_identity:
             raise ValueError("fake adapter staging root identity changed")
         with _locked_windows_directory(self._staging_root):

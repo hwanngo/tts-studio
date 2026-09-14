@@ -6,11 +6,13 @@ import functools
 import http.client
 import json
 import socket
+import ssl
 import threading
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import IO, Any
 from urllib.parse import urlsplit
 
 from tts_studio_worker_sdk.egress import (
@@ -154,34 +156,43 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
     def connect(self) -> None:
         self.sock = _connect_pinned(self.host, self.port, self.timeout, "http")
 
-    def request(self, *args, **kwargs) -> None:
+    def request(self, *args: Any, **kwargs: Any) -> None:
         _raise_if_cancelled(_current_cancellation())
         super().request(*args, **kwargs)
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    # CPython initializes this SSLContext; typeshed omits the private attribute.
+    _context: ssl.SSLContext
+
     def connect(self) -> None:
         self.sock = _connect_pinned(self.host, self.port, self.timeout, "https")
         _raise_if_cancelled(_current_cancellation())
         self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
 
-    def request(self, *args, **kwargs) -> None:
+    def request(self, *args: Any, **kwargs: Any) -> None:
         _raise_if_cancelled(_current_cancellation())
         super().request(*args, **kwargs)
 
 
 class _PinnedHTTPHandler(urllib.request.HTTPHandler):
-    def http_open(self, req):
+    def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
         return self.do_open(_PinnedHTTPConnection, req)
 
 
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
-    def https_open(self, req):
+    # HTTPSHandler likewise stores the verified TLS context in CPython.
+    _context: ssl.SSLContext
+
+    def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
         return self.do_open(_PinnedHTTPSConnection, req, context=self._context)
 
 
 class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    def redirect_request(
+        self, req: urllib.request.Request, fp: IO[bytes], code: int,
+        msg: str, headers: http.client.HTTPMessage, newurl: str,
+    ) -> urllib.request.Request | None:
         try:
             validate_provider_egress(newurl)
         except ProviderEgressError as error:
@@ -296,7 +307,7 @@ def _request_inner(
             "provider_egress_rejected", "The provider destination is not permitted.", retryable=False
         ) from error
     _raise_if_cancelled(cancellation)
-    payload = {"model": model, "input": text, "voice": voice, "response_format": "wav"}
+    payload: dict[str, str | float] = {"model": model, "input": text, "voice": voice, "response_format": "wav"}
     if speed is not None:
         payload["speed"] = speed
     body = json.dumps(payload).encode()
@@ -335,7 +346,7 @@ def _request_inner(
                     total += len(chunk)
                     if total > 20 * 1024 * 1024:
                         break
-                payload = b"".join(chunks)
+                audio_payload = b"".join(chunks)
             finally:
                 if cancellation is not None:
                     cancellation.detach()
@@ -356,7 +367,7 @@ def _request_inner(
             raise _cancelled_provider_error() from error
         raise ProviderRequestError("provider_unavailable", "The provider could not be reached.", retryable=True) from error
     try:
-        rate, frames, pcm = validate_wav(payload)
+        rate, frames, pcm = validate_wav(audio_payload)
     except ProviderAudioError as error:
         raise ProviderRequestError("provider_invalid_audio", "The provider returned unsupported audio.", retryable=False) from error
     return ProviderSynthesis(rate, frames, pcm)

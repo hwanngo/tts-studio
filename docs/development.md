@@ -33,7 +33,7 @@ UV_PYTHON=3.14 uv run python scripts/check_protocol.py
 UV_PYTHON=3.14 uv run python scripts/check_openapi.py
 UV_PYTHON=3.14 uv run python scripts/build_distribution.py
 UV_PYTHON=3.14 uv run pytest tests/packaging/test_build_distribution.py tests/packaging/test_wheel.py -q
-UV_PYTHON=3.14 uv run python scripts/check_mypy_baseline.py
+UV_PYTHON=3.14 uv run mypy --platform linux
 UV_PYTHON=3.14 uv run ruff check src/tts_studio/models src/tts_studio/workers src/tts_studio/generation src/tts_studio/server workers/vieneu/src workers/vieneu/tests tests/models tests/workers tests/generation tests/server tests/integration/test_vieneu_preset_generation.py
 git diff --check
 ```
@@ -61,24 +61,24 @@ not duplicate the backlog.
 
 The release-smoke workflow runs frontend unit/type/build checks, locale parity, Ruff,
 protocol/OpenAPI drift checks, deterministic tests, and distribution build after locked dependency
-installation. Its mypy step runs `scripts/check_mypy_baseline.py`, which prints the known
-26-diagnostic baseline and fails on any added, removed, or changed diagnostic; no blanket
-suppression or `continue-on-error` is used. The baseline covers analyzable Core/protocol/Worker-SDK
-trees, while the VieNeu Worker source is excluded because its locked third-party SDK and
-numerical/audio dependencies do not ship analyzable stubs. After intentionally fixing or accepting
-type debt, maintain the exact baseline with `uv run python scripts/check_mypy_baseline.py --update`,
-review the diff, and commit it with the code change. Generated protobuf stubs retain a narrow
+installation. Its mypy step runs `uv run mypy --platform linux` in strict mode and fails on any
+diagnostic. All 97 source files in Core, protocol, Worker SDK, and the fake, OpenAI-compatible,
+and VieNeu Workers are checked; the previous 26-error baseline and acceptance script are removed.
+The only external import exclusions are VieNeu's `numpy`, `soundfile`, `huggingface_hub`, and
+`vieneu` trees, which remain isolated in its locked Worker environment. Adapter source is never
+excluded. Two line-scoped exceptions document third-party typing limitations: the runtime-selected
+VieNeu SDK base class and types-grpcio's nominal done-callback class. Generated protobuf stubs retain a narrow
 per-file Ruff exception for generator-owned `UP040` aliases. Migration 012 and end-to-end
 Core-over-gRPC alignment coverage have direct assertions.
 
-The current full-suite baseline is green: the configured
-`UV_PYTHON=3.14 uv run --project . --python 3.14 pytest -q --tb=no` gate completes with
-`781 passed, 6 skipped`. The skips remain limited to explicitly optional hardware or unavailable
+The earlier full-suite verification recorded the configured
+`UV_PYTHON=3.14 uv run --project . --python 3.14 pytest -q --tb=no` gate completing with
+`781 passed, 6 skipped`. The skips were limited to explicitly optional hardware or unavailable
 offline dependency closures. Worker startup has a regression test for a readiness file that appears
 immediately after an initial open miss, and the installed-wheel smoke installs the protocol wheel
 built by that same smoke so a stale same-version cache entry cannot mask protocol drift. The storage,
 Worker containment, provider, alignment, migration, protocol, OpenAPI, frontend, packaging-build,
-and baseline-aware mypy checks remain separately required.
+and strict mypy checks remain separately required.
 
 The real-model gate is separate and never downloads prerequisites:
 
@@ -91,7 +91,7 @@ Run the Python, protocol, lint, and type checks with:
 ```console
 uv run pytest -v
 uv run ruff check .
-uv run python scripts/check_mypy_baseline.py
+uv run mypy --platform linux
 uv run python scripts/check_protocol.py
 uv run python scripts/check_openapi.py
 ```
@@ -101,12 +101,47 @@ not selected automatically:
 
 ```console
 UV_PYTHON=3.14 uv run --python 3.14 ruff check . --target-version py314
-UV_PYTHON=3.14 uv run python scripts/check_mypy_baseline.py
+UV_PYTHON=3.14 uv run mypy --platform linux
 ```
 
-The baseline checker runs mypy in the selected Python 3.14 environment, sorts diagnostics for a
-deterministic comparison, prints and matches the known diagnostics in
-`scripts/mypy-baseline.txt`, and fails when diagnostics drift.
+Mypy targets are configured in `pyproject.toml`, so a bare `uv run mypy` checks all owned Python
+source. CI fixes the static platform to Linux for deterministic cross-platform diagnostics;
+platform runtime behavior remains covered by the distribution and lifecycle checks.
+
+## Internal release compatibility
+
+Core, protocol, Worker SDK, and all three Workers form one release set, currently `0.1.0`.
+The root `pyproject.toml` version is authoritative. Every internal runtime dependency, plus Core's
+development-only Worker SDK dependency, is constrained with `==` to that release. Worker
+capabilities and protobuf major/minor negotiation remain separate runtime contracts; matching
+package versions do not imply that an adapter supports any particular capability.
+
+To change the release, edit only the root project version, synchronize the derived static package
+metadata, and regenerate every affected lock using uv:
+
+```console
+uv run --no-sync python scripts/sync_release_versions.py
+uv lock
+uv lock --project workers/fake
+uv lock --project workers/openai_compatible
+uv lock --project workers/vieneu
+uv run python scripts/sync_release_versions.py --check
+uv run pytest tests/packaging/test_release_set.py -q
+```
+
+Static package metadata keeps standalone wheels and source builds compatible with the standard
+`uv_build` backend. The production distribution builder and CI reject version drift before a
+release build. Core reports its installed distribution version instead of a second source constant.
+The release-set tests build every internal wheel, install only wheel artifacts in clean temporary
+environments outside the checkout, verify Core/Worker isolation and `uv pip check`, and require the
+installer to reject each of the eight internal dependency edges when supplied a different-release
+protocol or Worker SDK wheel. The synthetic `0.0.0` fixture is not a published release.
+VieNeu's full third-party installation remains the separately cache-aware installed-wheel gate.
+
+The OpenAI-compatible Worker explicitly authenticates `Align` and returns
+`alignment_unavailable`; it does not advertise alignment capability.
+Task 6's current focused results and known installation limitation are recorded in
+[the release-set and typing verification report](release-set-typing-verification.md).
 
 Build the normal release artifacts—the root source archive and wheel plus the protocol, Worker
 SDK, and VieNeu Worker wheels—with the production Web assets embedded:

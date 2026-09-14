@@ -398,10 +398,10 @@ def _part_headers(raw: bytes) -> dict[str, str]:
             raise ValueError("Malformed multipart headers.")
         headers[name.casefold()] = value.strip()
     disposition = headers.get("content-disposition", "")
-    name = re.search(r'(?:^|;)\s*name="([^"]+)"', disposition)
-    if name is None:
+    name_match = re.search(r'(?:^|;)\s*name="([^"]+)"', disposition)
+    if name_match is None:
         raise ValueError("Multipart field name is missing.")
-    return {"name": name.group(1)}
+    return {"name": name_match.group(1)}
 
 
 def _write_part(

@@ -9,7 +9,7 @@ description = "Shared authentication and server lifecycle helpers for TTS Studio
 requires-python = ">=3.14"
 dependencies = [
     "grpcio>=1.83.1",
-    "tts-studio-protocol",
+    "tts-studio-protocol==0.1.0",
 ]
 
 [tool.uv.sources]

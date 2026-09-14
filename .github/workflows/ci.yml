@@ -90,8 +90,11 @@ jobs:
       - name: Check Python formatting and lint
         run: uv run ruff check .
 
-      - name: Check Python type diagnostics against baseline
-        run: uv run python scripts/check_mypy_baseline.py
+      - name: Check Python types strictly
+        run: uv run mypy --platform linux
+
+      - name: Check internal release metadata
+        run: uv run python scripts/sync_release_versions.py --check
 
       - name: Check generated protocol
         run: uv run python scripts/check_protocol.py
