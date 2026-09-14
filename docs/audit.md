@@ -23,6 +23,7 @@ The focused verification records retain local command results and their stated l
 - [Worker containment verification](worker-containment-remediation-verification.md)
 - [Release-set and typing verification](release-set-typing-verification.md)
 - [CI assurance verification](ci-verification.md)
+- [Final full-branch verification](final-remediation-verification.md)
 
 ## Operational prerequisites
 
