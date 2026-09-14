@@ -355,6 +355,7 @@
     "previewButton": "Nghe thử",
     "previewingButton": "Đang nghe thử…",
     "previewFailed": "Nghe thử giọng thất bại.",
+    "previewUnavailable": "Không thể nghe thử: Worker đã chọn không hỗ trợ giọng cài sẵn qua luồng.",
     "voicesUnavailable": "Không có giọng khả dụng.",
     "voiceFallback": "giọng",
     "defaultSample": "Xin chào từ TTS Studio."
@@ -426,6 +427,8 @@
     "generationFailed": "Tạo giọng thất bại.",
     "generationStartFailed": "Không thể bắt đầu tạo giọng.",
     "generationCancelFailed": "Không thể hủy lượt tạo giọng.",
+    "generationUnavailable": "Không thể tạo giọng: Worker đã chọn không hỗ trợ tổng hợp qua luồng.",
+    "cancellationUnavailable": "Không thể hủy: Worker đã chọn không hỗ trợ hủy tổng hợp.",
     "voiceDiscoveryFailed": "Không thể tìm giọng."
   },
   "historyPage": {

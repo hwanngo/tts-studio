@@ -12,6 +12,13 @@ for (const [path, mod] of Object.entries(modules)) {
   if (lng) resources[lng] = { main: mod.default };
 }
 
+function updateDocumentLanguage(language: string | undefined) {
+  if (typeof document !== "undefined") document.documentElement.lang = language || "en-US";
+}
+
+i18n.on("languageChanged", updateDocumentLanguage);
+updateDocumentLanguage(i18n.language);
+
 void i18n
   .use(LanguageDetector)
   .use(initReactI18next)
@@ -28,6 +35,7 @@ void i18n
     interpolation: {
       escapeValue: false,
     },
-  });
+  })
+  .then(() => updateDocumentLanguage(i18n.resolvedLanguage ?? i18n.language));
 
 export default i18n;

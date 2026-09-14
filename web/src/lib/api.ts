@@ -228,6 +228,31 @@ export function fetchSavedVoices(modelId: string, signal?: AbortSignal): Promise
   );
 }
 
+export type ModelVoice = VoiceResponse & { source: "preset" | "saved" };
+
+/**
+ * Resolve the two public Voice catalogs as one deterministic list.  Preset Voices
+ * retain their API order, then Saved Voices retain theirs.  A catalog failure does
+ * not hide the other usable catalog; callers receive an error only when neither
+ * request succeeds.
+ */
+export async function fetchModelVoices(modelId: string, signal?: AbortSignal): Promise<ModelVoice[]> {
+  const [presetResult, savedResult] = await Promise.allSettled([
+    fetchVoices(modelId, signal),
+    fetchSavedVoices(modelId, signal),
+  ]);
+  const presets = presetResult.status === "fulfilled"
+    ? presetResult.value.map((voice) => ({ ...voice, source: "preset" as const }))
+    : [];
+  const saved = savedResult.status === "fulfilled"
+    ? savedResult.value.map((voice) => ({ id: `saved:${voice.id}`, label: voice.label, capabilities: ["saved"], source: "saved" as const }))
+    : [];
+  if (presetResult.status === "rejected" && savedResult.status === "rejected") {
+    throw presetResult.reason;
+  }
+  return [...presets, ...saved];
+}
+
 export function fetchProviders(signal?: AbortSignal): Promise<ProviderResponse[]> {
   return requestJson("/api/v1/providers", { signal }, "Provider list request");
 }

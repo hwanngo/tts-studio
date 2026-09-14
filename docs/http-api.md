@@ -113,6 +113,13 @@ create a new request after choosing supported options. Inline cues remain part o
 text payload rather than a separate request field: clients may display guidance only when the
 Worker advertises the runtime `inline_cues` capability, and must not assume cue support.
 
+The Web UI consumes these runtime facts from `GET /api/v1/runtime`: it enables generation only
+when the selected source can stream (and a preset source also has `preset_voices`), exposes
+prosody and cue guidance only for their advertised capabilities, enables cancellation only with
+`synthesis_cancellation`, and enables preset preview only with both `streaming_synthesis` and
+`preset_voices`. Unavailable controls remain visibly disabled with localized reasons; the browser
+does not infer a capability from an installed model or Voice catalog entry.
+
 The one-off Reference Recording seam is `POST /api/v1/references` (multipart `model_id`, one
 `file`, and optional `transcript`), `DELETE /api/v1/references/{reference_id}`, and
 `POST /api/v1/generations` with exactly one of `voice_id` or `reference_id`. Core returns only an

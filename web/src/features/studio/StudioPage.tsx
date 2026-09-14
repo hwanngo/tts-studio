@@ -16,10 +16,9 @@ import {
   createGeneration,
   fetchGenerations,
   fetchModels,
-  fetchSavedVoices,
   fetchSettings,
   fetchRuntime,
-  fetchVoices,
+  fetchModelVoices,
   hasBrowserApiToken,
   type SystemStatusResult,
 } from "../../lib/api";
@@ -177,13 +176,14 @@ export function StudioPage({ systemStatus }: StudioPageProps) {
     if (!modelId) { setVoices([]); setVoiceId(""); return; }
     const controller = new AbortController();
     setVoiceError(null);
-    fetchVoices(modelId, controller.signal).then(
-      (items) => { if (!controller.signal.aborted) { setVoices(items); setVoiceId(items[0]?.id || ""); } },
+    fetchModelVoices(modelId, controller.signal).then(
+      (items) => {
+        if (!controller.signal.aborted) {
+          setVoices(items);
+          setVoiceId((current) => items.some((item) => item.id === current) ? current : items[0]?.id || "");
+        }
+      },
       (error: unknown) => { if (!controller.signal.aborted) { setVoices([]); setVoiceId(""); setVoiceError(localizedMessage(error, "studioPage.voiceDiscoveryFailed")); } },
-    );
-    fetchSavedVoices(modelId, controller.signal).then(
-      (saved) => { if (!controller.signal.aborted) setVoices((current) => [...current, ...saved.map((item) => ({ id: `saved:${item.id}`, label: item.label, capabilities: ["saved"] }))]); },
-      () => undefined,
     );
     return () => controller.abort();
   }, [modelId]);
@@ -228,6 +228,11 @@ export function StudioPage({ systemStatus }: StudioPageProps) {
   const selectedWorker = selectedModel ? runtimeWorkers.find((worker) => worker.engine_id === engineIdForModel(selectedModel)) : undefined;
   const capabilities = new Set(selectedWorker?.capabilities ?? []);
   const optionSupported = (name: OptionName) => capabilities.has(name);
+  const selectedVoice = voices.find((voice) => voice.id === voiceId);
+  const generationSupported = capabilities.has("streaming_synthesis")
+    && (selectedVoice?.id.startsWith("saved:") || capabilities.has("preset_voices"));
+  const cancellationWorker = job ? runtimeWorkers.find((worker) => worker.engine_id === job.engine_id) : undefined;
+  const cancellationSupported = Boolean(cancellationWorker?.capabilities?.includes("synthesis_cancellation"));
   const setOption = (name: OptionName, value: number) => {
     setOptions((current) => ({ ...current, [name]: value }));
     setChangedOptions((current) => new Set(current).add(name));
@@ -319,11 +324,11 @@ export function StudioPage({ systemStatus }: StudioPageProps) {
           />
         </div>
         <label className="checkbox-field"><input type="checkbox" checked={retainArtifact} onChange={(event) => { retentionOverridden.current = true; setRetainArtifact(event.target.checked); }} /> <span>{t("studioPage.keepHistory")}</span><small>{t("studioPage.keepHistoryHint")}</small></label>
-        <div className="generate-row"><Button type="submit" disabled={busy || !modelId || !voiceId}><WandSparkles aria-hidden="true" size={18} /> {t("studioPage.generate")}</Button><p>{models.length === 0 ? t("studioPage.installModel") : t("studioPage.progress")}</p></div>
+        <div className="generate-row"><div><Button type="submit" disabled={busy || !modelId || !voiceId || !generationSupported} aria-describedby={!generationSupported && modelId && voiceId ? "generation-capability-reason" : undefined}><WandSparkles aria-hidden="true" size={18} /> {t("studioPage.generate")}</Button>{!generationSupported && modelId && voiceId ? <p className="component-field-hint" id="generation-capability-reason">{t("studioPage.generationUnavailable")}</p> : null}</div><p>{models.length === 0 ? t("studioPage.installModel") : t("studioPage.progress")}</p></div>
       </fieldset></form>
       {formError ? <Alert id="generation-form-error" variant="error" role="alert">{t(formError.key, formError.values)}</Alert> : null}
       </Card>
     </section>
-    {job ? <section aria-labelledby="generation-heading"><Card className="generation-panel"><div className="section-heading"><div><h2 id="generation-heading">{t("studioPage.current")}</h2><p className="mono-value">{job.id}</p></div>{CANCELLABLE_STATES.has(job.state) ? <Button type="button" variant="outline" disabled={busy || job.cancellation_requested} onClick={cancel}>{job.cancellation_requested ? t("studioPage.cancellationRequested") : t("studioPage.cancel")}</Button> : null}</div><JobStatus job={job} t={t} />{job.state === "generating" ? <><div className="live-pcm-status"><strong>{t("studioPage.livePcm")}</strong><span>{livePcmError ? t(livePcmError.key, livePcmError.values) : t("studioPage.bytesReceived", { bytes: formatNumber(livePcmBytes, i18n.language) })}</span></div><div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{pcmAnnouncement ? t(pcmAnnouncement.key, pcmAnnouncement.values) : null}</div></> : null}{job.error ? <Alert variant="error" role="alert" title={t(errorMessageKey(String(job.error.code ?? "")), { defaultValue: t("studioPage.generationError") })}>{t(errorMessageKey(job.error.code ? String(job.error.code) : undefined), { defaultValue: t("studioPage.generationFailed") })}</Alert> : null}{job.state === "completed" && (retainedArtifactUrl || ephemeralAudioUrl) ? <div className="audio-result"><audio controls preload="metadata" src={retainedArtifactUrl ?? ephemeralAudioUrl ?? undefined} aria-label={t("studioPage.finalizedAudio")}>{t("studioPage.browserAudio")}</audio>{retainedArtifactUrl ? <a className="button-link" href={retainedArtifactUrl} download={`tts-studio-${job.artifact_id ?? job.id}.wav`}>{t("studioPage.downloadWav")}</a> : <span className="muted-copy">{t("studioPage.sessionOnly")}</span>}</div> : null}{job.state === "completed" && !job.artifact_url && !ephemeralAudioUrl ? <p className="muted-copy">{t("studioPage.notRetained")}</p> : null}</Card></section> : null}
+    {job ? <section aria-labelledby="generation-heading"><Card className="generation-panel"><div className="section-heading"><div><h2 id="generation-heading">{t("studioPage.current")}</h2><p className="mono-value">{job.id}</p></div>{CANCELLABLE_STATES.has(job.state) ? <div><Button type="button" variant="outline" disabled={busy || job.cancellation_requested || !cancellationSupported} aria-describedby={!cancellationSupported ? "cancellation-capability-reason" : undefined} onClick={cancel}>{job.cancellation_requested ? t("studioPage.cancellationRequested") : t("studioPage.cancel")}</Button>{!cancellationSupported ? <p className="component-field-hint" id="cancellation-capability-reason">{t("studioPage.cancellationUnavailable")}</p> : null}</div> : null}</div><JobStatus job={job} t={t} />{job.state === "generating" ? <><div className="live-pcm-status"><strong>{t("studioPage.livePcm")}</strong><span>{livePcmError ? t(livePcmError.key, livePcmError.values) : t("studioPage.bytesReceived", { bytes: formatNumber(livePcmBytes, i18n.language) })}</span></div><div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{pcmAnnouncement ? t(pcmAnnouncement.key, pcmAnnouncement.values) : null}</div></> : null}{job.error ? <Alert variant="error" role="alert" title={t(errorMessageKey(String(job.error.code ?? "")), { defaultValue: t("studioPage.generationError") })}>{t(errorMessageKey(job.error.code ? String(job.error.code) : undefined), { defaultValue: t("studioPage.generationFailed") })}</Alert> : null}{job.state === "completed" && (retainedArtifactUrl || ephemeralAudioUrl) ? <div className="audio-result"><audio controls preload="metadata" src={retainedArtifactUrl ?? ephemeralAudioUrl ?? undefined} aria-label={t("studioPage.finalizedAudio")}>{t("studioPage.browserAudio")}</audio>{retainedArtifactUrl ? <a className="button-link" href={retainedArtifactUrl} download={`tts-studio-${job.artifact_id ?? job.id}.wav`}>{t("studioPage.downloadWav")}</a> : <span className="muted-copy">{t("studioPage.sessionOnly")}</span>}</div> : null}{job.state === "completed" && !job.artifact_url && !ephemeralAudioUrl ? <p className="muted-copy">{t("studioPage.notRetained")}</p> : null}</Card></section> : null}
   </div>;
 }
