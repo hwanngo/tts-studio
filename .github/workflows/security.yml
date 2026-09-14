@@ -1,10 +1,10 @@
 name: Security scanning
 
 on:
-  pull_request:
   push:
-    branches: [main, 'release/**']
-    tags: ['v*']
+    branches: [main]
+  schedule:
+    - cron: '41 3 * * 4'
   workflow_dispatch:
 
 # CodeQL needs only the permission required to upload its SARIF results. The
@@ -14,12 +14,12 @@ permissions:
   security-events: write
 
 concurrency:
-  group: security-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: security-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   analyze:
-    name: CodeQL and repository secret scan
+    name: CodeQL analysis
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
@@ -28,11 +28,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@c20e34f438d671fc35777cc9820dd7adf8252874 # v3
+        uses: github/codeql-action/init@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
         with:
           languages: python, javascript-typescript
-          build-mode: none
-      - name: Scan tracked text for high-confidence secrets
-        run: python3 scripts/scan_secrets.py
       - name: Analyze with CodeQL
-        uses: github/codeql-action/analyze@c20e34f438d671fc35777cc9820dd7adf8252874 # v3
+        uses: github/codeql-action/analyze@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0

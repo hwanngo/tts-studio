@@ -92,6 +92,15 @@ def _matching_lines(text: str, rule: Rule) -> Iterable[int]:
             yield line_number
 
 
+def _has_symbolic_link_component(path: Path) -> bool:
+    current = Path()
+    for component in path.parts:
+        current /= component
+        if current.is_symlink():
+            return True
+    return False
+
+
 def _scan(configuration: Configuration) -> list[tuple[PurePosixPath, int, Rule]]:
     findings: list[tuple[PurePosixPath, int, Rule]] = []
     for relative_path in _tracked_paths():
@@ -99,6 +108,8 @@ def _scan(configuration: Configuration) -> list[tuple[PurePosixPath, int, Rule]]
             continue
         path = Path(relative_path)
         try:
+            if _has_symbolic_link_component(path):
+                raise RuntimeError(f"refusing to scan symbolic link: {relative_path}")
             if not path.is_file() or path.stat().st_size > configuration.max_file_bytes:
                 continue
             content = path.read_bytes()

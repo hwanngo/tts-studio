@@ -147,11 +147,14 @@ parent-environment inheritance.
 ## GitHub security operations
 
 The repository-owned `.github/workflows/security.yml` runs CodeQL for Python and
-JavaScript/TypeScript plus `scripts/scan_secrets.py` on pull requests and the same protected
-pushes as ordinary CI. The local scanner reads only Git-tracked text files, its rules and size
-limit are deterministic in `security/secret-scan.toml`, and it makes no network requests. The
-security maintainer owns its rules and must review a proposed exclusion or pattern change; a real
-credential finding requires rotation and removal, not a scanner suppression.
+JavaScript/TypeScript on a `main` push, its weekly schedule, or a manual dispatch. It deliberately
+has no pull-request trigger. To preserve the existing 25-minute pull-request assurance ceiling and
+avoid a second runner, the repository-local `scripts/scan_secrets.py` runs as an initial step of
+the existing Linux assurance job in `.github/workflows/ci.yml`. The local scanner reads only
+Git-tracked text files, rejects every symbolic-link path component, has deterministic rules and a
+size limit in `security/secret-scan.toml`, and makes no network requests. The security maintainer
+owns its rules and must review a proposed exclusion or pattern change; a real credential finding
+requires rotation and removal, not a scanner suppression.
 
 Repository administrators must enable GitHub code scanning and secret scanning when the selected
 GitHub plan supports them. Enable push protection where available, keep the CodeQL workflow's
@@ -170,10 +173,10 @@ only weekly or by a manually authorized dispatch, never for pull requests, and r
 runner labels: `self-hosted`, `linux`, `x64`, and `tts-studio-vieneu-hardware`. Its controlled
 runner must provision the exact `/var/lib/tts-studio/vieneu-cache` directory and regular
 `.vieneu-model-cache-marker` before registration, along with Python 3.14, `uv`, and the offline
-locked Python dependencies. The workflow rejects a missing or symbolic-link cache/marker and the
-test verifies the exact model, codec, SDK, and file provenance before exercising hardware. A
-successful recent run is a release-candidate prerequisite; repair or re-provision the runner/cache
-rather than allowing a download or broadening the trigger.
+locked Python dependencies. Before `pytest` can start, the workflow validates marker JSON and the
+exact model/codec/SDK revisions plus every required regular, non-symbolic-link model and codec
+file. A successful recent run is a release-candidate prerequisite; repair or re-provision the
+runner/cache rather than allowing a download, a skipped prerequisite, or a broader trigger.
 Diagnostic output redacts credentials, authorization headers, and sensitive upstream payloads.
 
 The first remote provider adapter is `openai_compatible`. It runs in its own locked `uv` project,

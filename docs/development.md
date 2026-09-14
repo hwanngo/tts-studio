@@ -337,10 +337,11 @@ offline reload. When the installed SDK exposes the verified reference signature,
 and synthesizes from a local reference in both variants; no model or codec download is permitted.
 
 The GitHub hardware gate is a distinct scheduled/manual workflow, not a pull-request check. It
-accepts only the controlled `tts-studio-vieneu-hardware` self-hosted Linux x64 runner and checks
-the existing `/var/lib/tts-studio/vieneu-cache/.vieneu-model-cache-marker` before using the same
-offline command. Do not change that path, the required runner labels, or the offline mode to make
-a developer machine convenient; provision the controlled runner instead.
+accepts only the controlled `tts-studio-vieneu-hardware` self-hosted Linux x64 runner and validates
+the existing `/var/lib/tts-studio/vieneu-cache/.vieneu-model-cache-marker`, its JSON provenance,
+and every required model/codec file before using the same offline command. Do not change that path,
+the required runner labels, or the offline mode to make a developer machine convenient; provision
+the controlled runner instead.
 
 ### Security scanning
 
@@ -356,10 +357,12 @@ developer data. Keep rules narrow. For a genuine finding, rotate and remove the 
 false positive needs security-maintainer review and a targeted configuration change rather than a
 blanket exclusion.
 
-`.github/workflows/security.yml` runs this check and CodeQL analysis for Python and
-JavaScript/TypeScript on pull requests and protected pushes. GitHub code scanning and secret
-scanning, including push protection where available, remain repository-admin settings that depend
-on the GitHub plan; see the operational alert ownership and triage procedure in
+The existing Linux assurance job runs this check for pull requests without allocating another
+runner or extending the documented 25-minute assurance ceiling. `.github/workflows/security.yml`
+runs CodeQL analysis for Python and JavaScript/TypeScript only for a `main` push, weekly schedule,
+or manual dispatch. GitHub code scanning and secret scanning, including push protection where
+available, remain repository-admin settings that depend on the GitHub plan; see the operational
+alert ownership and triage procedure in
 [`docs/operations.md`](operations.md#github-security-operations).
 
 The deterministic contract and relevant Core/Worker suites are run with:

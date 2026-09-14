@@ -32,13 +32,10 @@ jobs:
         run: |
           python3 -c 'import sys; assert sys.version_info[:2] == (3, 14), sys.version'
           uv --version
-      - name: Require the provisioned cache marker
-        shell: bash
-        run: |
-          test -d "$TTS_STUDIO_VIENEU_MODEL_CACHE"
-          test ! -L "$TTS_STUDIO_VIENEU_MODEL_CACHE"
-          test -f "$TTS_STUDIO_VIENEU_MODEL_CACHE/.vieneu-model-cache-marker"
-          test ! -L "$TTS_STUDIO_VIENEU_MODEL_CACHE/.vieneu-model-cache-marker"
+      - name: Validate the complete provisioned cache
+        run: >-
+          python3 scripts/check_vieneu_hardware_cache.py
+          --cache "$TTS_STUDIO_VIENEU_MODEL_CACHE"
       - name: Run the offline real-model gate
         run: >-
           uv run --offline --frozen --project . pytest
