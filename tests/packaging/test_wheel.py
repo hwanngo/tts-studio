@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -16,6 +17,11 @@ import pytest
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _BUILD_SCRIPT = _REPOSITORY_ROOT / "scripts" / "build_distribution.py"
+_REMOTE_URL = re.compile(r"(?:https?:)?//[^\s\"'()]+")
+
+
+def _remote_urls(document: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(_REMOTE_URL.findall(document)))
 
 
 def _environment_executable(environment: Path, name: str) -> Path:
@@ -99,14 +105,19 @@ def test_installed_wheel_serves_web_ui_and_api(tmp_path: Path) -> None:
         root_metadata = root_wheel.read(root_metadata_name).decode("utf-8")
         root_index_name = next(name for name in root_names if name.endswith("/static/index.html"))
         root_index = root_wheel.read(root_index_name).decode("utf-8")
+        root_styles = "\n".join(
+            root_wheel.read(name).decode("utf-8")
+            for name in root_names
+            if "/static/assets/" in name and name.endswith(".css")
+        )
     assert not any("tts_studio_vieneu_worker" in name for name in root_names)
     assert not any("tts_studio_worker_sdk" in name for name in root_names)
     assert "Requires-Dist: tts-studio-worker-sdk" not in root_metadata
     assert "License-Expression: MIT" in root_metadata
     assert "License-File: LICENSE" in root_metadata
     assert any(name.endswith(".dist-info/licenses/LICENSE") for name in root_names)
-    assert "fonts.googleapis.com" not in root_index
-    assert "fonts.gstatic.com" not in root_index
+    assert _remote_urls(root_index) == ()
+    assert _remote_urls(root_styles) == ()
     with zipfile.ZipFile(vieneu_wheels[0]) as vieneu_wheel:
         vieneu_names = set(vieneu_wheel.namelist())
         vieneu_metadata = next(

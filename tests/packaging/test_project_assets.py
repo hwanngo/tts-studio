@@ -1,20 +1,48 @@
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+_REMOTE_URL = re.compile(r"(?:https?:)?//[^\s\"'()]+")
 
 
-def test_web_shell_does_not_request_google_fonts() -> None:
+def _remote_font_urls(document: str) -> tuple[str, ...]:
+    """Return network URLs used by the HTML shell or a stylesheet.
+
+    Relative asset paths and data URLs are self-contained and deliberately do
+    not match; protocol-relative URLs remain network requests and do match.
+    """
+    return tuple(dict.fromkeys(_REMOTE_URL.findall(document)))
+
+
+def test_web_assets_do_not_request_remote_fonts() -> None:
     shell = (_REPOSITORY_ROOT / "web" / "index.html").read_text(encoding="utf-8")
     styles = (_REPOSITORY_ROOT / "web" / "src" / "styles.css").read_text(encoding="utf-8")
 
-    assert "fonts.googleapis.com" not in shell
-    assert "fonts.gstatic.com" not in shell
+    assert _remote_font_urls(shell) == ()
+    assert _remote_font_urls(styles) == ()
     assert "ui-sans-serif" in styles
     assert "ui-monospace" in styles
+
+
+@pytest.mark.parametrize(
+    ("stylesheet", "expected"),
+    [
+        ('@import url("https://fonts.example.test/brand.css");', ("https://fonts.example.test/brand.css",)),
+        ('@font-face { src: url(//cdn.example.test/brand.woff2); }', ("//cdn.example.test/brand.woff2",)),
+        ('@font-face { src: url("data:font/woff2;base64,AAAA"); }', ()),
+        ('@font-face { src: url("/assets/brand.woff2"); }', ()),
+    ],
+)
+def test_remote_font_url_detection_rejects_any_host(
+    stylesheet: str, expected: tuple[str, ...]
+) -> None:
+    assert _remote_font_urls(stylesheet) == expected
 
 
 def test_readme_uses_runtime_model_and_voice_ids() -> None:
