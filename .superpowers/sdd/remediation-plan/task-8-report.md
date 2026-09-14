@@ -67,3 +67,14 @@ while completing this task.
   values, source-expression false-positive avoidance, and tracked symlink
   rejection. The scanner now rejects a symlink in any component of a tracked
   path rather than following it into untracked data.
+
+## P2 follow-up
+
+- Hardened the hardware-cache preflight equivalently: it now checks every path
+  component from the cache root through the marker, model directories, and
+  required files before calling `is_dir()` or `is_file()`. It therefore rejects
+  a linked `cache/models` directory and a linked nested `backbone` directory
+  without traversing either target.
+- Added both intermediate-directory regressions while retaining the complete
+  regular-directory/file acceptance test. Focused cache-preflight validation
+  passes with `8 passed`.

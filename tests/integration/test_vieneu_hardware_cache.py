@@ -83,3 +83,24 @@ def test_rejects_symbolic_linked_cache_file(tmp_path: Path) -> None:
     required_file.symlink_to(replacement)
 
     assert "safe codec files" in (cache_prerequisite_reason(cache) or "")
+
+
+def test_rejects_symbolic_linked_models_directory(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    _write_cache(cache)
+    external_models = tmp_path / "external-models"
+    (cache / "models").rename(external_models)
+    (cache / "models").symlink_to(external_models, target_is_directory=True)
+
+    assert "safe int8 model directory" in (cache_prerequisite_reason(cache) or "")
+
+
+def test_rejects_symbolic_linked_nested_model_directory(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    _write_cache(cache)
+    external_backbone = tmp_path / "external-backbone"
+    backbone = cache / "models" / "vieneu" / "backbone"
+    backbone.rename(external_backbone)
+    backbone.symlink_to(external_backbone, target_is_directory=True)
+
+    assert "safe int8 model directory" in (cache_prerequisite_reason(cache) or "")
