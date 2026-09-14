@@ -83,6 +83,7 @@ export function App() {
   const mainRef = useRef<HTMLElement>(null);
   const tokenInputRef = useRef<HTMLInputElement>(null);
   const previousPathname = useRef(location.pathname);
+  const systemRequestVersion = useRef(0);
 
   useEffect(() => {
     if (authenticationRequired) tokenInputRef.current?.focus();
@@ -91,14 +92,20 @@ export function App() {
   useEffect(() => {
     const controller = new AbortController();
     const unsubscribe = subscribeToAuthenticationFailure(() => {
+      systemRequestVersion.current += 1;
       setAuthenticationRequired(true);
       setAuthenticationError(true);
     });
+    const requestVersion = ++systemRequestVersion.current;
 
     fetchSystemStatus(controller.signal).then(
-      (value) => setSystemStatus({ state: "ready", value }),
+      (value) => {
+        if (!controller.signal.aborted && requestVersion === systemRequestVersion.current) {
+          setSystemStatus({ state: "ready", value });
+        }
+      },
       (error: unknown) => {
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && requestVersion === systemRequestVersion.current) {
           if (error instanceof ApiError && error.code === "authentication_failed") {
             setAuthenticationRequired(true);
           } else {
@@ -121,15 +128,18 @@ export function App() {
     event.preventDefault();
     const token = tokenInput.trim();
     if (!token) return;
+    const requestVersion = ++systemRequestVersion.current;
     setAuthenticating(true);
     setAuthenticationError(false);
     setBrowserApiToken(token);
     try {
       const value = await fetchSystemStatus();
+      if (requestVersion !== systemRequestVersion.current) return;
       setSystemStatus({ state: "ready", value });
       setAuthenticationRequired(false);
       setTokenInput("");
     } catch (error) {
+      if (requestVersion !== systemRequestVersion.current) return;
       if (error instanceof ApiError && error.code === "authentication_failed") {
         setAuthenticationError(true);
       } else {

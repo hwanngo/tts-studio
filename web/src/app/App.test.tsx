@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, expect, test, vi } from "vitest";
 import i18n from "../i18n";
@@ -295,4 +295,64 @@ test("prompts for a bearer token and retries the Core request without persisting
     (init?.headers as Record<string, string> | undefined)?.Authorization === "Bearer browser-secret"
   ))).toBe(true);
   expect(localStorage.getItem("tts-studio-api-token")).toBeNull();
+});
+
+test("does not reopen the token prompt when an invalidated initial status request fails after login", async () => {
+  type AuthenticationErrorEnvelope = {
+    error: {
+      code: string;
+      correlation_id: string;
+      details: Record<string, never>;
+      message: string;
+      retryable: boolean;
+      source: string;
+    };
+  };
+  let resolveInitialError!: (value: AuthenticationErrorEnvelope) => void;
+  const initialError = new Promise<AuthenticationErrorEnvelope>((resolve) => { resolveInitialError = resolve; });
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = init?.headers as Record<string, string> | undefined;
+    if (fetchMock.mock.calls.length === 1) {
+      return Promise.resolve({
+        ok: false,
+        status: 401,
+        json: () => initialError,
+      } as Response);
+    }
+    if (headers?.Authorization === "Bearer newer-secret") {
+      return Promise.resolve(new Response(JSON.stringify(systemStatus), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<MemoryRouter><App /></MemoryRouter>);
+
+  const tokenField = await screen.findByLabelText("API token");
+  fireEvent.change(tokenField, { target: { value: "newer-secret" } });
+  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+  expect(await screen.findByText("Core online")).toBeVisible();
+
+  await act(async () => {
+    resolveInitialError({
+      error: {
+        code: "authentication_failed",
+        correlation_id: "corr-stale-initial",
+        details: {},
+        message: "Authentication failed.",
+        retryable: false,
+        source: "authentication",
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+  });
+
+  expect(screen.queryByRole("dialog", { name: "Connect to Core" })).toBeNull();
+  expect(screen.getByText("Core online")).toBeVisible();
 });

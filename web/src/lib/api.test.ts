@@ -139,6 +139,35 @@ test("browser session authenticates PCM, event, and media streaming requests", a
   }
 });
 
+test("authenticated event reconnect resumes after the last delivered event when its reader fails", async () => {
+  const encoder = new TextEncoder();
+  let streamController!: ReadableStreamDefaultController<Uint8Array>;
+  const interruptedStream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      streamController = controller;
+      controller.enqueue(encoder.encode("id: 42\nevent: download.progress\ndata: {}\n\n"));
+    },
+  });
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(interruptedStream, { status: 200 }))
+    .mockResolvedValueOnce(new Response("", { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  setBrowserApiToken("session-secret");
+
+  const onEvent = vi.fn();
+  const unsubscribe = subscribeToModelEvents(onEvent);
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(onEvent).toHaveBeenCalledOnce());
+  streamController.error(new Error("connection interrupted"));
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+  unsubscribe();
+
+  expect(fetchMock.mock.calls[1][1]?.headers).toEqual(expect.objectContaining({
+    Authorization: "Bearer session-secret",
+    "Last-Event-ID": "42",
+  }));
+});
+
 test("authentication failure clears the browser session before the next request", async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(new Response(JSON.stringify({

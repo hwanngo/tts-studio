@@ -391,7 +391,13 @@ function subscribeToAuthenticatedModelEvents(onEvent: () => void): () => void {
         },
         "Model event stream",
       );
-      lastEventId = await consumeModelEvents(response, onEvent, controller.signal, lastEventId);
+      lastEventId = await consumeModelEvents(
+        response,
+        onEvent,
+        controller.signal,
+        lastEventId,
+        (eventId) => { lastEventId = eventId; },
+      );
     } catch (error) {
       if (controller.signal.aborted || (error instanceof ApiError && error.code === "authentication_failed")) {
         return;
@@ -412,6 +418,7 @@ async function consumeModelEvents(
   onEvent: () => void,
   signal: AbortSignal,
   previousEventId?: string,
+  onLastEventId?: (eventId: string) => void,
 ): Promise<string | undefined> {
   if (!response.body) throw new ApiError("Model event stream did not include a body");
   const reader = response.body.getReader();
@@ -428,7 +435,10 @@ async function consumeModelEvents(
         let eventType = "message";
         for (const line of block.split(/\r?\n/)) {
           if (line.startsWith("event:")) eventType = line.slice(6).trimStart();
-          if (line.startsWith("id:")) lastEventId = line.slice(3).trimStart();
+          if (line.startsWith("id:")) {
+            lastEventId = line.slice(3).trimStart();
+            onLastEventId?.(lastEventId);
+          }
         }
         if ((MODEL_EVENT_TYPES as readonly string[]).includes(eventType)) onEvent();
       }

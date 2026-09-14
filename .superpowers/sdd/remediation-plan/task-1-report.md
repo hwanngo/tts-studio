@@ -50,3 +50,37 @@ passed
 ## Scope and concerns
 
 No token values are persisted by this feature. Native `EventSource` cannot attach bearer headers, so authenticated model events intentionally use a fetch-based SSE consumer. The Host middleware retains a narrowly scoped `http://test` ASGI-transport exception so pre-existing in-process route tests continue to exercise public routes; real network listeners do not receive that server scope.
+
+## Review remediation evidence
+
+Added two regression tests before the implementation adjustment:
+
+- Authenticated event reconnect delivers event ID 42, fails the stream reader, and asserts that the next authenticated request sends Last-Event-ID: 42.
+- A delayed initial 401 envelope arrives after a newer bearer login succeeds and verifies that the login gate remains closed.
+
+RED:
+
+    pnpm --dir web test --run src/lib/api.test.ts src/app/App.test.tsx
+
+    FAIL authenticated event reconnect resumes after the last delivered event when its reader fails
+    Expected Last-Event-ID: "42"
+    Received headers without Last-Event-ID
+
+GREEN:
+
+    pnpm --dir web test --run src/lib/api.test.ts src/app/App.test.tsx
+    2 files passed, 21 tests passed
+
+    pnpm --dir web test --run
+    14 files passed, 120 tests passed
+
+    pnpm --dir web check
+    tsc --noEmit and locale key parity check passed
+
+    pnpm --dir web build
+    vite build succeeded
+
+    git diff --check
+    passed
+
+The event consumer now persists the cursor as each parsed ID arrives, rather than only after the reader completes. The App increments a request version whenever authentication invalidates state or a new login starts; only the current request may update the system status or authentication gate.
