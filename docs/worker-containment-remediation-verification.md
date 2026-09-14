@@ -1,4 +1,4 @@
-# Worker containment and capacity remediation verification
+# Worker containment and capacity verification
 
 Date: 2026-09-14. Host: macOS ARM64, Python 3.14.7. Scope: Worker containment and capacity.
 
@@ -50,11 +50,12 @@ skipped on macOS. Native Windows execution has **not** been claimed or verified 
 The implementation follows Microsoft's documented
 [Job Object membership, termination, and kill-on-close model](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
 
-## RED/GREEN evidence
+## Regression and behavior evidence
 
-The following failures were observed before their corresponding implementation changes:
+The following regression coverage records behavior that must remain true. The first evidence
+column identifies the behavior rejected by the test; the second identifies the required result.
 
-| Regression | RED evidence | GREEN evidence |
+| Regression | Rejected behavior | Required behavior |
 | --- | --- | --- |
 | Two ready replicas execute concurrently | Second generation creation timed out on `_replica_gate` while the first replica was held | Both real-gRPC generations reach GENERATING before release; third request waits and later completes |
 | Uncooperative cancellation | Worker `returncode` remained `None` after stream closure | Worker exits before reuse and a replacement synthesizes successfully |
@@ -65,9 +66,8 @@ The following failures were observed before their corresponding implementation c
 | Stale hard-stop cannot affect replacement | Repeating hard-stop on the original Worker cancelled replacement supervision and failed ownership verification | Repeated call is harmless and replacement health remains ready |
 | Retry after native cleanup failure | A real-gRPC fixture returned a retryable error but remained alive after refusing unload | Containment removes the Worker/helper, preserves retryability, and the explicit successor completes once |
 
-The new Windows module's initial test collection failed because the module did not yet exist;
-after implementation, the portable gate tests passed and the native test skipped on this host.
-The descendant-exit abstraction test additionally exercises retained Job ownership on timeout.
+The portable gate tests cover retained Job ownership when descendant exit times out. Native Windows
+coverage remains a platform-specific check and is skipped on this host.
 
 The real-gRPC stuck fixture extends only the test fake adapter in its isolated `uv` project. It
 starts a cancellation-ignoring thread and a SIGTERM-ignoring helper, continues reporting READY,
@@ -112,24 +112,21 @@ owned-source scope; see the [release-set and typing verification](release-set-ty
   verified. A kernel or permission failure to terminate remains visible cleanup failure; no
   claim is made that an unkillable process has stopped.
 
-## Review corrections: shared termination and hard-stop
+## Shared termination and hard-stop regression coverage
 
-Review reproduced two races in the original implementation. Both were addressed test-first.
+Two persistent regressions protect shared termination behavior:
 
 1. `test_hard_stop_recognizes_reaping_after_watcher_close_is_cancelled` blocks the
-   failure watcher's first `channel.close()`, then requests hard-stop. RED: cancellation
-   allowed cleanup to reap the real Worker and delete its owner record, but hard-stop
-   then raised `verified Worker process-group containment is unavailable`. GREEN:
-   verified termination is recorded on the owned Worker before cleanup removes files
-   or propagates the close cancellation. Hard-stop recognizes that proof and schedules
-   replacement; the regression verifies a new ready PID and ready diagnostics.
+   failure watcher's first `channel.close()`, then requests hard-stop. Verified termination must
+   be recorded on the owned Worker before cleanup removes files or propagates close cancellation.
+   Hard-stop recognizes that proof and schedules replacement; the regression verifies a new ready
+   PID and ready diagnostics.
 2. `test_concurrent_hard_stop_completion_cannot_replace_new_worker_watcher` controls
-   forced termination completion so a second caller can finish after replacement.
-   RED: the delayed caller replaced the new Worker's registered watcher with a stale
-   watcher. GREEN: concurrent callers share one in-flight hard-stop transaction on
-   the Worker object, and publication revalidates that this same Worker still owns
-   the replica slot. The regression verifies that the new watcher remains registered
-   and running and that only one forced termination reaches the controlled boundary.
+   forced termination completion so a second caller can finish after replacement. Concurrent
+   callers share one in-flight hard-stop transaction on the Worker object, and publication
+   revalidates that this same Worker still owns the replica slot. The regression verifies that
+   the new watcher remains registered and running and that only one forced termination reaches
+   the controlled boundary.
 
 Watchers, planned retirement, planned stop, and hard-stop now share a termination task
 per Worker. Only successful verified process/group/Job reaping records termination;
@@ -138,7 +135,7 @@ visible and a later cleanup action can retry them. Caller cancellation cannot ca
 another caller's shared termination or hard-stop transaction. The underlying POSIX
 identity checks and Windows Job containment are unchanged.
 
-Follow-up validation on macOS:
+Targeted validation on macOS:
 
 ```console
 uv run pytest -q tests/workers/test_supervisor.py::test_hard_stop_recognizes_reaping_after_watcher_close_is_cancelled tests/workers/test_supervisor.py::test_concurrent_hard_stop_completion_cannot_replace_new_worker_watcher

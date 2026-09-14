@@ -101,7 +101,8 @@ generated Python response types were regenerated without an interface change.
 - Privacy redaction is logical SQLite redaction, not forensic erasure from old backups or storage.
 - Cleanup failure recovery remains an operator repair/restart workflow; unsafe artifacts and
   consumed one-off references never become retry input.
-- Live providers, model downloads, optional VieNeu hardware, and Windows containment are outside
-  this task. Existing platform/optional dependency skips are reported rather than claimed passed.
+- Live providers, model downloads, optional VieNeu hardware, and native Windows containment were
+  not exercised by this verification. Existing platform/optional dependency skips are reported
+  rather than claimed passed.
 - Documentation synchronized: HTTP, operations, engine protocol prose, development status,
   migration expectations, generated client paths, and this tracked verification record.
