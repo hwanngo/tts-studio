@@ -47,9 +47,16 @@ tts runtime status
 tts models validate pnnbao-ump/VieNeu-TTS-v3-Turbo
 tts models list
 tts models download pnnbao-ump/VieNeu-TTS-v3-Turbo
-tts voices list
-tts speak "Xin chào" --model vieneu --voice "Adam" --output speech.wav
-tts speak --model vieneu --voice "Adam" --file article.txt --output speech.wav
+```
+
+After a download completes, it prints `Model: <model-installation-id>`. Use that installation ID
+(not the repository or engine label) to list the preset voices, then use the returned voice ID for
+synthesis:
+
+```console
+tts voices list --model <model-installation-id>
+tts speak "Xin chào" --model <model-installation-id> --voice <voice-id> --output speech.wav
+tts speak --model <model-installation-id> --voice <voice-id> --file article.txt --output speech.wav
 ```
 
 ## Development
