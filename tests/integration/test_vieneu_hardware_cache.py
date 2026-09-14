@@ -38,6 +38,10 @@ def _write_cache(root: Path) -> None:
     codec_root.mkdir()
     for filename in CODEC_FILES:
         (codec_root / filename).write_text("fixture", encoding="utf-8")
+    cloning_root = root / "models" / "vieneu" / "cloning"
+    cloning_root.mkdir()
+    for filename in ("denoiser.onnx", "speaker_encoder.onnx"):
+        (cloning_root / filename).write_text("fixture", encoding="utf-8")
 
 
 def test_accepts_complete_pinned_cache(tmp_path: Path) -> None:
@@ -104,3 +108,23 @@ def test_rejects_symbolic_linked_nested_model_directory(tmp_path: Path) -> None:
     backbone.symlink_to(external_backbone, target_is_directory=True)
 
     assert "safe int8 model directory" in (cache_prerequisite_reason(cache) or "")
+
+
+@pytest.mark.parametrize("filename", ["denoiser.onnx", "speaker_encoder.onnx"])
+def test_rejects_missing_cloning_runtime_file(tmp_path: Path, filename: str) -> None:
+    cache = tmp_path / "cache"
+    _write_cache(cache)
+    (cache / "models" / "vieneu" / "cloning" / filename).unlink()
+
+    assert "safe cloning files" in (cache_prerequisite_reason(cache) or "")
+
+
+def test_rejects_symbolic_linked_cloning_directory(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    _write_cache(cache)
+    cloning = cache / "models" / "vieneu" / "cloning"
+    external_cloning = tmp_path / "external-cloning"
+    cloning.rename(external_cloning)
+    cloning.symlink_to(external_cloning, target_is_directory=True)
+
+    assert "safe cloning directory" in (cache_prerequisite_reason(cache) or "")

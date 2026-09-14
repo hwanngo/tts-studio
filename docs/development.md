@@ -337,7 +337,11 @@ and synthesizes from a local reference in both variants; no model or codec downl
 The hardware-gate definition is a distinct scheduled/manual workflow, not a pull-request check. It
 accepts only the required `tts-studio-vieneu-hardware` self-hosted Linux x64 runner and validates
 the existing `/var/lib/tts-studio/vieneu-cache/.vieneu-model-cache-marker`, its JSON provenance,
-and every required model/codec file before using the same offline command. Do not change that path,
+and every required model/codec/cloning file before using the same offline command. Cloning includes
+`models/vieneu/cloning/denoiser.onnx` and `models/vieneu/cloning/speaker_encoder.onnx`, both required
+by runtime loading. The hardware script's cancellation block also runs over real in-process gRPC
+in the deterministic script regression, without importing VieNeu or using model files.
+Do not change that path,
 the required runner labels, or the offline mode to make a developer machine convenient; provision
 the controlled runner instead. A hosted runner and successful execution are operational prerequisites,
 not repository-verifiable completion.

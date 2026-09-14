@@ -178,7 +178,9 @@ runner labels: `self-hosted`, `linux`, `x64`, and `tts-studio-vieneu-hardware`. 
 must be provisioned with the exact `/var/lib/tts-studio/vieneu-cache` directory and regular
 `.vieneu-model-cache-marker`, Python 3.14, `uv`, and the offline locked Python dependencies before
 the definition can run. It validates marker JSON, exact model/codec/SDK revisions, and every
-required regular, non-symbolic-link model and codec file before `pytest` starts. A successful
+required regular, non-symbolic-link model, codec, and cloning file before `pytest` starts. Cloning
+requires both `cloning/denoiser.onnx` and `cloning/speaker_encoder.onnx` below `models/vieneu`,
+because runtime loading opens both even when the gate uses a preset Voice. A successful
 recent hosted execution is a release-candidate prerequisite; repair or re-provision the runner/cache
 rather than allowing a download, a skipped prerequisite, or a broader trigger. Diagnostic output
 redacts credentials, authorization headers, and sensitive upstream payloads.

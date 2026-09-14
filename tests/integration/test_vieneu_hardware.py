@@ -126,14 +126,19 @@ async def main():
                 metadata=metadata,
                 timeout=30,
             )
-            first_cancel_event = await anext(cancelled_stream)
+            cancellation_iterator = cancelled_stream.__aiter__()
+            first_cancel_event = await anext(cancellation_iterator)
             assert first_cancel_event.HasField("header"), first_cancel_event
             cancelled_stream.cancel()
             cancellation_events = []
             cancellation_rpc_error = None
+            locally_cancelled = False
             try:
-                async for event in cancelled_stream:
+                async for event in cancellation_iterator:
                     cancellation_events.append(event)
+            except asyncio.CancelledError:
+                assert cancelled_stream.cancelled()
+                locally_cancelled = True
             except grpc.aio.AioRpcError as error:
                 cancellation_rpc_error = error
             cancellation_errors = [
@@ -144,7 +149,7 @@ async def main():
             if cancellation_errors:
                 assert cancellation_errors[-1].code == "synthesis_cancelled"
                 assert cancellation_errors[-1].details["terminal_status"] == "CANCELLED"
-            else:
+            elif not locally_cancelled:
                 assert cancellation_rpc_error is not None
                 assert cancellation_rpc_error.code() == grpc.StatusCode.CANCELLED
             await stub.UnloadModel(

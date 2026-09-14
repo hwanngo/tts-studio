@@ -27,6 +27,7 @@ CODEC_FILES = (
     "moss_audio_tokenizer_encode.data",
     "moss_audio_tokenizer_encode.onnx",
 )
+CLONING_FILES = ("denoiser.onnx", "speaker_encoder.onnx")
 
 
 def _has_symbolic_link_component(cache_root: Path, path: Path) -> bool:
@@ -83,6 +84,11 @@ def cache_prerequisite_reason(model_cache: Path | None) -> str | None:
         return "VieNeu cache is missing the safe codec directory"
     if not all(_is_safe_regular_file(model_cache, codec_root / name) for name in CODEC_FILES):
         return "VieNeu cache is missing safe codec files"
+    cloning_root = model_cache / "models" / "vieneu" / "cloning"
+    if not _is_safe_directory(model_cache, cloning_root):
+        return "VieNeu cache is missing the safe cloning directory"
+    if not all(_is_safe_regular_file(model_cache, cloning_root / name) for name in CLONING_FILES):
+        return "VieNeu cache is missing safe cloning files"
     return None
 
 

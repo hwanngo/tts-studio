@@ -96,7 +96,36 @@ Worker facts. Managed-data defaults, adapter-owned Hugging Face compatibility, e
 provider secrets, and exclusion of VieNeu's deprecated style parameter are preserved.
 
 The focused HTTP, protocol, operations, development, and audit documents describe these changes.
-No new interface, invariant, source correction, or lock update was required by this final pass.
+No new interface, invariant, source correction, or lock update was required by the initial local
+pass at `065ea94`. The subsequent review correction is recorded below.
+
+## Hardware-gate review correction
+
+A subsequent full-branch review found that the skipped hardware script called `anext()` directly
+on a gRPC `UnaryStreamCall`, which is async iterable but is not itself an async iterator. After
+using its iterator, local gRPC cancellation raises `asyncio.CancelledError`, which also needed
+explicit handling. The script now retains the iterator and verifies local call cancellation;
+structured cancellation events and RPC errors with status `CANCELLED` remain supported.
+
+A new no-hardware regression executes the actual embedded cancellation block against an
+in-process real gRPC server. It first failed with the reported `TypeError`, then reproduced the
+uncaught `CancelledError` after the iterator-only correction. Both failures are now covered
+without importing VieNeu or using a cache. A syntax check alone did not detect these API errors.
+
+Review also found that runtime loading requires `cloning/denoiser.onnx` and
+`cloning/speaker_encoder.onnx` below `models/vieneu`, but the preflight did not inspect them.
+The preflight now requires both safe regular files and an unlinked cloning directory. New tests
+first demonstrated acceptance of either missing file and of a linked cloning directory, then
+passed after the validator correction. The operations and development contracts now identify
+these required assets. These changes affect verification code only; real-model and hosted
+execution remain prerequisites and the earlier full-suite measurements retain their stated scope.
+
+Follow-up verification: the hardware-script, cache, opt-in hardware, and VieNeu Core/Worker
+contract selection passed with **16 passed, 2 opt-in skips**; the isolated VieNeu Worker suite
+passed **110 tests**. Repository-wide Ruff format/lint, strict mypy (97 files), secret scanning,
+all three workflow actionlint/YAML checks, and whitespace checks passed. The fixed runner cache
+path still fails preflight because it is absent locally. The full Core coverage/build/browser
+gate was not rerun for this verification-only correction.
 
 ## Release handoff prerequisites
 
