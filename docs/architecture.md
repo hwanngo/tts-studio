@@ -48,7 +48,8 @@ This is a target layout, not the current implementation state.
 1. A client submits a native or OpenAI-compatible generation request.
 2. The Core validates it, resolves model and Voice, creates a Generation Job, and schedules a healthy Worker Replica.
 3. The supervisor provisions or starts the Worker if needed, admits it only after authenticated
-   protocol/capability validation, and lazily loads the Model Installation. Per-replica health
+   protocol/capability validation, and lazily loads the Model Installation. A Model Installation
+   may request one through eight independently scheduled Worker Replicas. Per-replica health
    supervision replaces unexpected failures with bounded backoff and exposes exhausted failures.
 4. The Core calls streamed `Synthesize` over gRPC; cancellation is bounded and an uncooperative
    Worker runtime is quarantined rather than reused.
@@ -64,6 +65,8 @@ This is a target layout, not the current implementation state.
 - Workers are private, capability-driven, authenticated, and replaceable.
 - Engine dependencies never enter the Core environment.
 - UI, CLI, and compatibility endpoints share Core application behavior.
+- Loopback HTTP accepts only the configured numeric listener authority; non-loopback API access
+  requires a configured bearer token, which the Web UI retains only for its current runtime session.
 - Persisted state is reconciled with process and filesystem reality at startup; incomplete
   migration chains fail before advancing SQLite schema state.
 - Protocol major/minor compatibility and Worker capability metadata are validated at admission and

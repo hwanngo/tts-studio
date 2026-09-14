@@ -77,7 +77,8 @@ attempts and capped exponential backoff; exhausted replicas remain unhealthy unt
 lifecycle action. `GET /api/v1/service` reports lifecycle status. Install, uninstall, and restart
 use explicit confirmation-bearing `POST` routes and return an operation result; unsupported
 lifecycle operations return `service_unsupported`.
-`PATCH /api/v1/models/{model_id}/replicas` changes the desired Worker replica count from 1 to 8.
+`PATCH /api/v1/models/{model_id}/replicas` changes the desired Worker Replica count from 1 to 8.
+Each healthy Replica admits one active generation; excess work waits for supervisor capacity.
 `GET /api/v1/generations/{job_id}/pcm` streams transient validated mono S16LE PCM with explicit
 sample-rate, channel-count, and encoding headers; PCM is never durable.
 

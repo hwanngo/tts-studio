@@ -1,8 +1,7 @@
 # CI assurance verification
 
-Verified locally on 2026-09-14, macOS ARM64, Python 3.14.7, starting from
-a922cb7735ae3aa5ca4705fa28e5efb9a8047c4c. Hosted Linux/Windows execution is pending
-the normal PR run; no hosted workflow was dispatched during this task.
+Verified locally on 2026-09-14, macOS ARM64, Python 3.14.7. Hosted Linux, macOS, and Windows
+execution remains an operational prerequisite; these local results do not establish hosted status.
 
 ## Workflow and cost
 

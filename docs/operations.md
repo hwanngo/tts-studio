@@ -60,10 +60,11 @@ mismatched data directories produce actionable diagnostics rather than starting 
 
 ## Worker operations
 
-Models load lazily. Users can unload a model or restart its Workers. The VieNeu Worker
-uses one serialized runtime replica, explicit ONNX/CPU `int8` or `fp32` selection, and a pinned
-offline codec snapshot; configurable replicas remain deferred. ONNX thread count is independent
-of replica count.
+Models load lazily. Users can unload a model or restart its Workers. Each VieNeu Worker Replica
+serializes one active generation and uses explicit ONNX/CPU `int8` or `fp32` selection with a
+pinned offline codec snapshot. The desired replica count is configurable from one through eight;
+the supervisor schedules each healthy replica independently. ONNX thread count is independent of
+replica count.
 
 The supervisor performs bounded authenticated health checks, drains Workers before planned restarts, and propagates cancellation. An unexpected process exit or failed health check marks the replica unhealthy, records sanitized diagnostics, cleans up its managed launch files, and attempts up to three consecutive replacements with capped exponential backoff. Planned shutdown cancels watchers before cleanup, preventing restart races; exhausted replacements remain unhealthy until an explicit lifecycle action. Failed termination retains the quarantined process and its ownership resources so a subsequent stop can retry cleanup. A replica remains owned during failure cleanup, including when planned shutdown interrupts its watcher.
 
@@ -125,8 +126,10 @@ prerequisites are precise skips, never implicit downloads or a fallback to float
 
 The default listener accepts loopback IP literals and defaults to `127.0.0.1`. Non-loopback serving
 requires `TTS_STUDIO_API_TOKEN_ENV` to name a populated environment variable. The Core then
-requires a bearer token on every public API request; the CLI forwards it automatically. Remote
-browser token UX remains out of scope for this slice.
+requires a bearer token on every public API request; the CLI forwards it automatically. The Web UI
+prompts after its first authentication failure and keeps the supplied bearer token only in the
+current browser runtime; it never stores it in URLs or browser storage. See
+[the HTTP authentication contract](http-api.md#network-security).
 
 Worker gRPC ports are ephemeral and loopback-only. Every launch uses an explicit command and
 resolved working directory. The child receives only an allowlist of required platform environment
@@ -146,15 +149,16 @@ parent-environment inheritance.
 
 ## GitHub security operations
 
-The repository-owned `.github/workflows/security.yml` runs CodeQL for Python and
+The repository-owned `.github/workflows/security.yml` defines CodeQL analysis for Python and
 JavaScript/TypeScript on a `main` push, its weekly schedule, or a manual dispatch. It deliberately
-has no pull-request trigger. To preserve the existing 25-minute pull-request assurance ceiling and
-avoid a second runner, the repository-local `scripts/scan_secrets.py` runs as an initial step of
-the existing Linux assurance job in `.github/workflows/ci.yml`. The local scanner reads only
-Git-tracked text files, rejects every symbolic-link path component, has deterministic rules and a
-size limit in `security/secret-scan.toml`, and makes no network requests. The security maintainer
-owns its rules and must review a proposed exclusion or pattern change; a real credential finding
-requires rotation and removal, not a scanner suppression.
+has no pull-request trigger. A completed hosted run and uploaded results are required before CodeQL
+is treated as observed evidence. To preserve the 25-minute pull-request assurance ceiling and avoid
+a second runner, `.github/workflows/ci.yml` invokes the repository-local
+`scripts/scan_secrets.py` as an initial Linux-assurance step. The local scanner reads only Git-tracked
+text files, rejects every symbolic-link path component, has deterministic rules and a size limit in
+`security/secret-scan.toml`, and makes no network requests. The security maintainer owns its rules
+and must review a proposed exclusion or pattern change; a real credential finding requires rotation
+and removal, not a scanner suppression.
 
 Repository administrators must enable GitHub code scanning and secret scanning when the selected
 GitHub plan supports them. Enable push protection where available, keep the CodeQL workflow's
@@ -168,16 +172,16 @@ immediately, create a tracked remediation item for confirmed code issues, and do
 false-positive dismissal in GitHub. Treat an alert that cannot be reproduced as open until its
 data flow or credential provenance is understood.
 
-The cache-pinned VieNeu hardware workflow is `.github/workflows/vieneu-hardware.yml`. It runs
-only weekly or by a manually authorized dispatch, never for pull requests, and requires all four
-runner labels: `self-hosted`, `linux`, `x64`, and `tts-studio-vieneu-hardware`. Its controlled
-runner must provision the exact `/var/lib/tts-studio/vieneu-cache` directory and regular
-`.vieneu-model-cache-marker` before registration, along with Python 3.14, `uv`, and the offline
-locked Python dependencies. Before `pytest` can start, the workflow validates marker JSON and the
-exact model/codec/SDK revisions plus every required regular, non-symbolic-link model and codec
-file. A successful recent run is a release-candidate prerequisite; repair or re-provision the
-runner/cache rather than allowing a download, a skipped prerequisite, or a broader trigger.
-Diagnostic output redacts credentials, authorization headers, and sensitive upstream payloads.
+The cache-pinned VieNeu hardware definition is `.github/workflows/vieneu-hardware.yml`. It is
+scheduled weekly or may be manually dispatched, never runs for pull requests, and requires all four
+runner labels: `self-hosted`, `linux`, `x64`, and `tts-studio-vieneu-hardware`. A controlled runner
+must be provisioned with the exact `/var/lib/tts-studio/vieneu-cache` directory and regular
+`.vieneu-model-cache-marker`, Python 3.14, `uv`, and the offline locked Python dependencies before
+the definition can run. It validates marker JSON, exact model/codec/SDK revisions, and every
+required regular, non-symbolic-link model and codec file before `pytest` starts. A successful
+recent hosted execution is a release-candidate prerequisite; repair or re-provision the runner/cache
+rather than allowing a download, a skipped prerequisite, or a broader trigger. Diagnostic output
+redacts credentials, authorization headers, and sensitive upstream payloads.
 
 The first remote provider adapter is `openai_compatible`. It runs in its own locked `uv` project,
 accepts typed provider configuration in the authenticated synthesis RPC, calls the provider's
@@ -193,20 +197,11 @@ resolver or transport operation to drain; an operation still blocked after that 
 the Worker, makes Health not ready for supervised replacement, and checks cancellation again before
 any credentialed connection can continue.
 
-## Audit remediation backlog
+## Audit closure
 
-The remaining security and reliability backlog is intentionally maintained here as the canonical
-backlog. Completed remediation includes owner-only managed-directory and identity-bound file
-operations, readiness-file hardening, crash/orphan supervision with bounded replacement, bounded
-direct Worker/reference inputs, migration-gap detection, protocol compatibility checks, provider
-egress policy, cancellation quarantine, bounded generation requests, terminal text redaction,
-and explicit idempotent Generation retry, supervisor capacity admission, and forced native-call
-containment through verified POSIX groups or Windows Job Objects. Native Windows execution remains
-a platform CI verification requirement; portable tests do not substitute for that evidence.
-Retained transient failures with reusable voice sources support an explicit new attempt; cancelled,
-non-retained, consumed-reference, and cleanup-failed attempts cannot be regenerated through retry.
-Startup cleanup failures still require repair and Core restart. Other documents link here instead
-of maintaining a second backlog.
+The [audit closure](audit.md) records repository-verifiable resolutions and separately lists the
+external service, hosted-execution, runner-provisioning, and GitHub-settings prerequisites that
+remain to be observed. This document is the operational contract for the implemented behavior.
 
 ## Settings and service administration
 

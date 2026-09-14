@@ -1,6 +1,6 @@
 # Release-set compatibility and strict typing verification
 
-Date: 2026-09-14. Scope: audit remediation Task 6.
+Date: 2026-09-14. Scope: release-set compatibility and strict typing.
 
 ## Result
 
@@ -61,7 +61,7 @@ wheels; it does not depend on editable internal package installations or an incr
 
 ## Verification
 
-Commands were run with Python 3.14.7 on macOS ARM64 in the audit-remediation worktree.
+Commands were run with Python 3.14.7 on macOS ARM64.
 
 | Check | Result |
 | --- | --- |
@@ -100,5 +100,5 @@ service modules using isolated Python execution.
 
 The package release version is independent of protobuf major/minor negotiation and adapter runtime
 capabilities. Core remains the sole public server/SQLite writer, and no engine dependency enters
-the Core wheel's runtime dependency graph. A complete cross-platform/full-suite release run remains
-the parent remediation workflow's broader verification responsibility.
+the Core wheel's runtime dependency graph. Complete cross-platform release verification remains an
+operational prerequisite until hosted platform runs are observed.

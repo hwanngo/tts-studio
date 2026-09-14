@@ -1,8 +1,7 @@
 # Generation remediation verification
 
 Date: 2026-09-14
-Scope: remediation Task 2 — generation request validation, terminal privacy, explicit retry.
-Worktree: `/Users/hwan/Personal/tts-studio/.worktrees/audit-remediation`.
+Scope: generation request validation, terminal privacy, and explicit retry.
 
 ## Result and contract
 
@@ -87,14 +86,13 @@ Other checks passed:
 uv run python scripts/generate_openapi_client.py
 uv run python scripts/check_openapi.py
 uv run python scripts/check_protocol.py
-uv run python scripts/check_mypy_baseline.py
+uv run mypy --platform linux
 uv run ruff check src/tts_studio/generation src/tts_studio/server/routes/generation.py src/tts_studio/server/routes/openai.py src/tts_studio/server/errors.py src/tts_studio/storage/db.py tests/generation/test_service.py tests/server/test_generation_routes.py tests/storage/test_migrations.py tests/integration/test_generation.py tests/integration/test_phase3_generation_artifact.py
 git diff --check
 ```
 
-The mypy baseline remains **26 pre-existing diagnostics**. Its update changes line locations only;
-it adds no newly accepted error. OpenAPI TypeScript paths now include retry; generated Python
-response types were regenerated and require no content change.
+Strict mypy now runs directly and rejects every diagnostic. OpenAPI TypeScript paths include retry;
+generated Python response types were regenerated without an interface change.
 
 ## Compatibility and limits
 

@@ -1,6 +1,6 @@
 # Worker containment and capacity remediation verification
 
-Date: 2026-09-14. Host: macOS ARM64, Python 3.14.7. Scope: remediation plan Task 3.
+Date: 2026-09-14. Host: macOS ARM64, Python 3.14.7. Scope: Worker containment and capacity.
 
 ## Implemented behavior
 
@@ -99,10 +99,8 @@ was absent from the offline `uv` cache. Release build, protocol drift check, foc
 diff whitespace checks passed. The built Core wheel contains the new Windows containment module.
 
 `uv run mypy --platform linux src/tts_studio/workers/windows_job.py src/tts_studio/workers/supervisor.py --follow-imports=silent`
-passed with no diagnostics. The full configured mypy targets retain exactly the existing **26**
-diagnostics after normalizing source line numbers, with no added or removed diagnostic. Task 3
-does not update the tracked baseline; integration must refresh its changed line locations in
-the plan's type-baseline task.
+passed with no diagnostics. Strict mypy subsequently reached zero diagnostics across the configured
+owned-source scope; see the [release-set and typing verification](release-set-typing-verification.md).
 
 ## Remaining verification limits
 
@@ -114,9 +112,9 @@ the plan's type-baseline task.
   verified. A kernel or permission failure to terminate remains visible cleanup failure; no
   claim is made that an unkillable process has stopped.
 
-## Task 3 review corrections: shared termination and hard-stop
+## Review corrections: shared termination and hard-stop
 
-The Task 3 review reproduced two races in the original commit. Both were addressed test-first.
+Review reproduced two races in the original implementation. Both were addressed test-first.
 
 1. `test_hard_stop_recognizes_reaping_after_watcher_close_is_cancelled` blocks the
    failure watcher's first `channel.close()`, then requests hard-stop. RED: cancellation

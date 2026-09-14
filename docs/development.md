@@ -6,9 +6,10 @@ Python dependencies, tools, and Worker environments use `uv`. Frontend dependenc
 
 The foundation vertical slice, model-management workflow, generation/history, Saved Voices,
 configurable replicas, VieNeu runtime/acquisition, remote providers, UI, CLI, detached/service
-lifecycle, and Worker runtime upgrade/rollback are implemented. CI runs platform-neutral assurance
-once on Linux, then exercises the same built artifacts and a bounded Core test selection on Linux
-x64, macOS ARM64, and Windows x64.
+lifecycle, and Worker runtime upgrade/rollback are implemented. The checked-in CI definition
+performs platform-neutral assurance once on Linux, then defines the same built-artifact and bounded
+Core test selection for Linux x64, macOS ARM64, and Windows x64. Hosted execution is recorded
+separately from this repository definition.
 Exact commands belong here only after their configuration exists; `pyproject.toml`, package
 scripts, and command help remain the executable source of truth.
 
@@ -47,20 +48,17 @@ integrity, while the default binary WAV path remains unaligned. The dedicated en
 Core-over-real-gRPC alignment integration test is `tests/integration/test_alignment.py` and is run
 with `uv run pytest tests/integration/test_alignment.py -q`.
 
-## Audit remediation status and backlog
+## Assurance status
 
-The canonical security and reliability backlog is maintained in
-[`docs/operations.md`](operations.md#audit-remediation-backlog). The completed remediation state
-now includes managed-directory and identity-bound file hardening, Worker readiness and orphan
-handling, bounded crash replacement, bounded direct inputs, provider egress enforcement, bounded
-cancellation with quarantine, migration continuity checks, protocol compatibility validation, and
-Core-over-real-gRPC alignment coverage, generation input limits, atomic terminal privacy redaction,
-and explicit idempotent Generation retry. Forced native-call termination now uses supervised
-POSIX groups or Windows Job Objects; Windows execution remains a platform-specific verification
-gate. This section intentionally does
-not duplicate the backlog.
+The [audit closure](audit.md) distinguishes repository-verifiable controls from external hosted
+execution, runner provisioning, and GitHub settings. Implemented controls include managed-directory
+and identity-bound file hardening, Worker readiness and orphan handling, bounded crash replacement,
+provider egress enforcement, cancellation quarantine, migration continuity checks, protocol
+compatibility validation, input limits, atomic terminal privacy redaction, idempotent Generation
+retry, and forced native-call termination through supervised POSIX groups or Windows Job Objects.
+Portable coverage does not replace a native Windows execution.
 
-The Linux assurance job runs frontend unit/type/build checks, locale parity, Ruff lint and
+The Linux assurance definition runs frontend unit/type/build checks, locale parity, Ruff lint and
 `ruff format --check`, protocol/OpenAPI drift checks, deterministic Core coverage, all three
 locked Worker suites, Chromium browser tests, and one release build. Its mypy step runs
 `uv run mypy --platform linux` in strict mode and fails on any
@@ -143,8 +141,8 @@ VieNeu's full third-party installation remains the separately cache-aware instal
 
 The OpenAI-compatible Worker explicitly authenticates `Align` and returns
 `alignment_unavailable`; it does not advertise alignment capability.
-Task 6's current focused results and known installation limitation are recorded in
-[the release-set and typing verification report](release-set-typing-verification.md).
+Focused results and known installation limits are recorded in the
+[release-set and typing verification report](release-set-typing-verification.md).
 
 Build the normal release artifacts—the root source archive and wheel plus the protocol, Worker
 SDK, and VieNeu Worker wheels—with the production Web assets embedded:
@@ -185,7 +183,7 @@ command/health hooks for deterministic tests. The real release path uses offline
 and candidate Worker verification; run it with a complete artifact directory and the required
 cached third-party wheels.
 
-The workflow definition is `.github/workflows/ci.yml`. Its three platform smokes depend on Linux
+The CI definition is `.github/workflows/ci.yml`. Its three platform smokes depend on Linux
 assurance and download the same release artifact set; they do not install Node or rebuild Web
 assets. Each runs platform-safe configuration, settings, client, migration, generation registry,
 PCM, CLI, and Worker containment tests. Windows additionally runs the native Job Object test.
@@ -197,15 +195,15 @@ skipping it. Windows paths and process cleanup live in the Python helper; the ma
 is a YAML folded scalar valid in both PowerShell and Bash.
 
 The three older installed-distribution fixtures accept `TTS_STUDIO_TEST_DIST_DIR` to reuse an
-existing complete artifact set. Linux CI runs all three with this variable after the one build,
+existing complete artifact set. The Linux assurance definition runs all three with this variable after the one build,
 preserving the deep installed Core/fake-Worker generation, cancellation, recovery, and `uv tool`
 checks. Without the variable, local invocations still build their own artifacts. The optional
 offline VieNeu closure check can still skip when its third-party packages are not cached.
 
 ## CI cost, coverage, and dependency updates
 
-Pull requests run CI; pushes run only for `main`, `release/**` branches, and `v*` tags. Ordinary
-feature-branch pushes do not duplicate PR runs. A concurrency group cancels superseded runs of
+The CI definition triggers for pull requests and for pushes only to `main`, `release/**` branches,
+and `v*` tags. Ordinary feature-branch pushes do not duplicate PR runs. A concurrency group cancels superseded runs of
 the same PR/ref. Linux assurance has a 25-minute timeout; each artifact smoke has 12 minutes.
 The maximum runner allocation drops from three 30-minute jobs to 25 + 3 × 12 = 61 raw runner
 minutes, and the expensive macOS/Windows runners no longer repeat lint, type, Web, browser, or
@@ -336,12 +334,13 @@ and `fp32`, runtime preset discovery, streaming cancellation, 48 kHz output, unl
 offline reload. When the installed SDK exposes the verified reference signature, it also validates
 and synthesizes from a local reference in both variants; no model or codec download is permitted.
 
-The GitHub hardware gate is a distinct scheduled/manual workflow, not a pull-request check. It
-accepts only the controlled `tts-studio-vieneu-hardware` self-hosted Linux x64 runner and validates
+The hardware-gate definition is a distinct scheduled/manual workflow, not a pull-request check. It
+accepts only the required `tts-studio-vieneu-hardware` self-hosted Linux x64 runner and validates
 the existing `/var/lib/tts-studio/vieneu-cache/.vieneu-model-cache-marker`, its JSON provenance,
 and every required model/codec file before using the same offline command. Do not change that path,
 the required runner labels, or the offline mode to make a developer machine convenient; provision
-the controlled runner instead.
+the controlled runner instead. A hosted runner and successful execution are operational prerequisites,
+not repository-verifiable completion.
 
 ### Security scanning
 
@@ -357,12 +356,12 @@ developer data. Keep rules narrow. For a genuine finding, rotate and remove the 
 false positive needs security-maintainer review and a targeted configuration change rather than a
 blanket exclusion.
 
-The existing Linux assurance job runs this check for pull requests without allocating another
+The Linux assurance definition invokes this check for pull requests without allocating another
 runner or extending the documented 25-minute assurance ceiling. `.github/workflows/security.yml`
-runs CodeQL analysis for Python and JavaScript/TypeScript only for a `main` push, weekly schedule,
-or manual dispatch. GitHub code scanning and secret scanning, including push protection where
-available, remain repository-admin settings that depend on the GitHub plan; see the operational
-alert ownership and triage procedure in
+defines CodeQL analysis for Python and JavaScript/TypeScript only for a `main` push, weekly
+schedule, or manual dispatch. A successful hosted run and uploaded results remain an operational
+prerequisite. GitHub code scanning and secret scanning, including push protection where available,
+remain repository-admin settings that depend on the GitHub plan; see the operational alert ownership and triage procedure in
 [`docs/operations.md`](operations.md#github-security-operations).
 
 The deterministic contract and relevant Core/Worker suites are run with:
@@ -385,11 +384,12 @@ Worker artifacts for test isolation, install Core and Workers into separate isol
 from the artifact set, verify embedded assets,
 dependency closure, Worker generated RPC presence, and Core-to-Worker import isolation, and exercise
 foreground server lifecycle. The artifact smokes also provision
-the fake Worker from its packaged wheel in a separate environment. The installed workflow
+the fake Worker from its packaged wheel in a separate environment. The installed artifact smoke
 proves that the Core accepts the Worker's opaque activated Model Installation ID, owns every WAV
 artifact path, and recovers private generation staging before model staging cleanup. Background
 upgrade/rollback safety, background control, service definitions, and `uv tool install` smoke
-coverage are implemented; macOS ARM64, Windows x64, and Linux x64 CI remain.
+coverage are implemented. The platform smoke definitions target macOS ARM64, Windows x64, and Linux
+x64; hosted execution remains an operational prerequisite.
 Apple Silicon smoke benchmarks will record time-to-first-audio and real-time factor as trends, not
 brittle hard gates.
 

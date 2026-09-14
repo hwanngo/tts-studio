@@ -17,10 +17,8 @@ distribution tooling, and the bilingual Web UI.
 - [Model management](model-management.md): compatibility, revisions, downloads, and cache
 - [Operations](operations.md): data directory, processes, startup, networking, and security
 - [Development](development.md): repository layout, dependency tools, testing, and distribution
-- [Project audit](audit.md): current risks, strengths, verification evidence, and remediation order
+- [Audit closure](audit.md): repository-verifiable resolutions and external operational prerequisites
 - [ADRs](adr/): costly architecture decisions and their rationale
 
-Canonical domain terms live in [CONTEXT.md](../CONTEXT.md).
-
-The roadmap is a status and sequencing document, not an executable plan. Implementation details
-belong in the focused contract documents and in the tests that exercise the public seams.
+Canonical domain terms live in [CONTEXT.md](../CONTEXT.md). Implementation details belong in the
+focused contract documents and in the tests that exercise the public seams.
