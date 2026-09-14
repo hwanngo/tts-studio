@@ -336,6 +336,32 @@ and `fp32`, runtime preset discovery, streaming cancellation, 48 kHz output, unl
 offline reload. When the installed SDK exposes the verified reference signature, it also validates
 and synthesizes from a local reference in both variants; no model or codec download is permitted.
 
+The GitHub hardware gate is a distinct scheduled/manual workflow, not a pull-request check. It
+accepts only the controlled `tts-studio-vieneu-hardware` self-hosted Linux x64 runner and checks
+the existing `/var/lib/tts-studio/vieneu-cache/.vieneu-model-cache-marker` before using the same
+offline command. Do not change that path, the required runner labels, or the offline mode to make
+a developer machine convenient; provision the controlled runner instead.
+
+### Security scanning
+
+Run the repository-local, deterministic secret scan before changing its rules or CI wiring:
+
+```console
+python3 scripts/scan_secrets.py
+```
+
+The scanner evaluates only tracked text files with the high-confidence patterns and byte limit in
+`security/secret-scan.toml`; it does not download a scanner, submit source, or scan untracked
+developer data. Keep rules narrow. For a genuine finding, rotate and remove the credential. A
+false positive needs security-maintainer review and a targeted configuration change rather than a
+blanket exclusion.
+
+`.github/workflows/security.yml` runs this check and CodeQL analysis for Python and
+JavaScript/TypeScript on pull requests and protected pushes. GitHub code scanning and secret
+scanning, including push protection where available, remain repository-admin settings that depend
+on the GitHub plan; see the operational alert ownership and triage procedure in
+[`docs/operations.md`](operations.md#github-security-operations).
+
 The deterministic contract and relevant Core/Worker suites are run with:
 
 ```console

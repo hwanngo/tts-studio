@@ -196,8 +196,11 @@ workflow concurrency group, and frontend/static/build work repeats across three 
 The repository API reports both features disabled. Dependabot and local pattern scans are useful but
 do not replace semantic code scanning or historical/push-time secret detection.
 
-**Remediation:** enable CodeQL and secret scanning when the repository plan supports them, or run
-equivalent scanners in CI with documented ownership and triage.
+**Remediation:** CodeQL now analyzes Python and JavaScript/TypeScript in the pinned
+`.github/workflows/security.yml`; the same bounded Linux job runs the repository-local,
+network-free scanner configured by `security/secret-scan.toml`. Repository administrators must
+also enable GitHub code and secret scanning (plus push protection where available) when their plan
+supports them. `docs/operations.md` assigns alert triage to the security maintainer.
 
 ### M-12 — The local-first Web UI makes external Google Fonts requests
 
