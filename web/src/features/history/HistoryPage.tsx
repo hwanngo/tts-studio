@@ -5,9 +5,45 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { AudioArtifactResponse } from "../../generated/api";
-import { deleteHistory, fetchHistory } from "../../lib/api";
+import { createAuthenticatedMediaUrl, deleteHistory, fetchHistory, hasBrowserApiToken } from "../../lib/api";
 import { errorMessageKey, formatBytes, formatDuration, formatNumber, localizedMessage, type LocalizedMessage } from "../../lib/i18n";
 type BulkFailure = { id: string; message: LocalizedMessage };
+
+function ArtifactMedia({ item }: { item: AudioArtifactResponse }) {
+  const { t } = useTranslation();
+  const authenticated = hasBrowserApiToken();
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    const controller = new AbortController();
+    let createdUrl: string | null = null;
+    createAuthenticatedMediaUrl(item.audio_url, controller.signal).then(
+      (value) => {
+        if (!controller.signal.aborted) {
+          createdUrl = value;
+          setObjectUrl(value);
+        } else {
+          URL.revokeObjectURL(value);
+        }
+      },
+      () => undefined,
+    );
+    return () => {
+      controller.abort();
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [authenticated, item.audio_url]);
+
+  const mediaUrl = authenticated ? objectUrl : item.audio_url;
+  if (!mediaUrl) return null;
+  return (
+    <>
+      <audio controls preload="metadata" src={mediaUrl} aria-label={t("historyPage.audioArtifact", { id: item.id })}>{t("historyPage.browserAudio")}</audio>
+      <a className="button-link" href={mediaUrl} download={`tts-studio-${item.id}.wav`}>{t("historyPage.downloadWav")}</a>
+    </>
+  );
+}
 
 export function HistoryPage() {
   const { t, i18n } = useTranslation();
@@ -105,9 +141,9 @@ export function HistoryPage() {
               <Card className="history-card">
                 <div className="model-card-header"><div><h2>{t("historyPage.generation", { id: item.job_id })}</h2><p className="mono-value">{item.id}</p></div><span className="model-status model-status-completed">{t("historyPage.finalized")}</span></div>
                 <label className="history-select"><input type="checkbox" aria-label={t("historyPage.selectArtifact", { id: item.id })} checked={selectedIds.has(item.id)} onChange={() => toggleSelected(item.id)} disabled={bulkDeleting} /><span>{t("historyPage.selectThis")}</span></label>
-              <audio controls preload="metadata" src={item.audio_url} aria-label={t("historyPage.audioArtifact", { id: item.id })}>{t("historyPage.browserAudio")}</audio>
+              <ArtifactMedia item={item} />
               <dl className="model-facts compact-facts"><div><dt>{t("historyPage.duration")}</dt><dd>{formatDuration(item.duration_ms, i18n.language)}</dd></div><div><dt>{t("historyPage.format")}</dt><dd>{t("historyPage.hzChannel", { rate: formatNumber(item.sample_rate, i18n.language), count: item.channel_count })}</dd></div><div><dt>{t("historyPage.size")}</dt><dd>{formatBytes(item.byte_size, i18n.language)}</dd></div></dl>
-              <div className="card-actions"><a className="button-link" href={item.audio_url} download={`tts-studio-${item.id}.wav`}>{t("historyPage.downloadWav")}</a><Button type="button" variant="outline" disabled={deleting === item.id || bulkDeleting} onClick={() => void remove(item)}><Trash2 aria-hidden="true" size={17} />{deleting === item.id ? t("historyPage.deleting") : t("historyPage.delete")}</Button></div>
+              <div className="card-actions"><Button type="button" variant="outline" disabled={deleting === item.id || bulkDeleting} onClick={() => void remove(item)}><Trash2 aria-hidden="true" size={17} />{deleting === item.id ? t("historyPage.deleting") : t("historyPage.delete")}</Button></div>
               </Card>
             </li>
           ))}

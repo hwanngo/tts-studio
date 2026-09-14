@@ -64,7 +64,9 @@ class _WorkerTokenInterceptor(grpc.aio.ServerInterceptor):
             )
         return handler
 
-    def _authenticated_unary_unary(self, behavior: Callable[..., Awaitable[object]]) -> Callable[..., Awaitable[object]]:
+    def _authenticated_unary_unary(
+        self, behavior: Callable[..., Awaitable[object]]
+    ) -> Callable[..., Awaitable[object]]:
         async def authenticated(
             request: object, context: grpc.aio.ServicerContext[Any, Any]
         ) -> object:
@@ -85,7 +87,9 @@ class _WorkerTokenInterceptor(grpc.aio.ServerInterceptor):
 
         return authenticated
 
-    def _authenticated_stream_unary(self, behavior: Callable[..., Awaitable[object]]) -> Callable[..., Awaitable[object]]:
+    def _authenticated_stream_unary(
+        self, behavior: Callable[..., Awaitable[object]]
+    ) -> Callable[..., Awaitable[object]]:
         async def authenticated(
             request_iterator: AsyncIterator[object],
             context: grpc.aio.ServicerContext[Any, Any],
@@ -162,7 +166,7 @@ async def serve_worker(
     for signum in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(signum, shutdown_requested.set)
-        except (NotImplementedError, RuntimeError, ValueError):
+        except NotImplementedError, RuntimeError, ValueError:
             continue
         installed_signals.append(signum)
 
@@ -174,9 +178,7 @@ async def serve_worker(
 
         termination_task = asyncio.create_task(server.wait_for_termination())
         shutdown_task = asyncio.create_task(shutdown_requested.wait())
-        await asyncio.wait(
-            (termination_task, shutdown_task), return_when=asyncio.FIRST_COMPLETED
-        )
+        await asyncio.wait((termination_task, shutdown_task), return_when=asyncio.FIRST_COMPLETED)
     finally:
         try:
             for task in (termination_task, shutdown_task):

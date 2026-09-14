@@ -18,7 +18,12 @@ def main() -> None:
     parser.add_argument("--owner-claim")
     args = parser.parse_args()
     token = consume_worker_token(args.token_file)
-    asyncio.run(serve_worker(
-        OpenAICompatibleWorker(token), host=args.host, port=args.port,
-        token=token, ready_file=args.ready_file,
-    ))
+    asyncio.run(
+        serve_worker(
+            OpenAICompatibleWorker(token),
+            host=args.host,
+            port=args.port,
+            token=token,
+            ready_file=args.ready_file,
+        )
+    )

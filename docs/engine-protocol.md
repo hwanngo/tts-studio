@@ -70,12 +70,16 @@ does not add a separate cue field or assume that every adapter interprets cue sy
 - gRPC cancellation and deadlines propagate into engine inference. Adapters wait for a bounded
   cancellation interval before lifecycle cleanup; if native inference ignores cancellation, the
   Worker quarantines that runtime, fails unload closed, and rejects reuse rather than claiming
-  quiescence. The isolated Worker remains the containment boundary until an explicit lifecycle
-  action terminates it.
+  quiescence. Core allows 500 ms for authenticated unload to confirm cancellation cleanup, then
+  quarantines and forcibly terminates the contained Worker if that confirmation fails. Failed
+  process termination prevents reuse and replacement; successful termination permits supervised
+  replacement. The bounded cleanup and platform containment guarantees are specified in
+  [operations](operations.md#worker-operations).
 - Core-to-client backpressure limits buffered audio.
 - Once any audio is exposed to a client, a Worker failure cannot be retried transparently. Core
-  Generation terminal errors and cancellations are non-retryable because no native Generation
-  retry RPC exists; startup-recovery failures remain explicitly retryable after repair.
+  retries are explicit HTTP actions that create a new Job and Synthesize request; eligible retained
+  transient failures preserve the Worker's retryable fact after cleanup. No Worker retry RPC or
+  automatic stream replay is introduced. Cancelled and consumed-reference jobs are not retried.
 
 Core accepts only 48,000 Hz, mono, signed 16-bit little-endian PCM from the fake Worker. The
 Core validates header, sequence, byte alignment, and declared frame totals, then writes and
@@ -104,7 +108,9 @@ authenticated Health checks. Unexpected failure marks the replica unhealthy, rec
 startup diagnostics, cleans up its managed process files, and attempts up to three consecutive
 replacements with capped exponential backoff. POSIX launches use isolated process groups and unique
 managed owner claims so startup reconciliation can terminate a live genuine orphan without signaling
-an unrelated PID; unverifiable records fail closed. Windows launches support authenticated direct-child graceful and forced cleanup while Core owns the process handle, but do not provide durable orphan recovery or descendant containment after Core loss. Planned shutdown cancels supervision before cleanup, so it cannot
+an unrelated PID; unverifiable records fail closed. Windows gates engine startup until assignment
+to a kill-on-close Job Object with descendant containment; it retains no durable orphan record.
+Native Windows execution coverage is platform-specific. Planned shutdown cancels supervision before cleanup, so it cannot
 race a restart. If replacement attempts are exhausted, the replica remains unhealthy and the
 failure stays visible until an explicit lifecycle action. Unload is graceful; explicit restart
 terminates and recreates the process when graceful shutdown exceeds its deadline.
@@ -126,7 +132,7 @@ handshake and on later capability refreshes. CI generates stubs reproducibly and
 uncommitted generation drift. Every adapter runs a shared compliance suite covering handshake,
 auth, capabilities, model validation, progress ordering, lifecycle, voice reporting, synthesis,
 cancellation, deadline handling, and structured errors. SQLite startup refuses to apply an
-incomplete migration chain; migrations `002` through `012` must be present and contiguous before
+incomplete migration chain; migrations `002` through `013` must be present and contiguous before
 `user_version` advances.
 
 ## VieNeu profile

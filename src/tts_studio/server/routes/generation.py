@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterator
 from http import HTTPStatus
 from threading import Lock
-from typing import Any
+from typing import IO, Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request, Response
@@ -22,6 +23,7 @@ from tts_studio.generation.domain import (
     GenerationJob,
     SynthesisOptions,
 )
+from tts_studio.generation.limits import MAX_SYNTHESIS_TEXT_CHARS
 from tts_studio.generation.service import (
     GenerationArtifactDeletionError,
     GenerationArtifactInvalidError,
@@ -31,6 +33,7 @@ from tts_studio.generation.service import (
     GenerationModelNotFoundError,
     GenerationReferenceNotFoundError,
     GenerationRequestError,
+    GenerationRetryError,
     GenerationService,
     GenerationVoiceNotFoundError,
 )
@@ -42,7 +45,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class _ArtifactHandleOwner:
-    def __init__(self, handle: Any) -> None:
+    def __init__(self, handle: IO[bytes]) -> None:
         self._handle = handle
         self._close_task: asyncio.Task[None] | None = None
         self._lock = Lock()
@@ -69,7 +72,7 @@ class _ArtifactHandleOwner:
 class _ArtifactStreamingResponse(StreamingResponse):
     def __init__(
         self,
-        handle: Any,
+        handle: IO[bytes] | _ArtifactHandleOwner,
         *,
         start: int = 0,
         length: int | None = None,
@@ -114,9 +117,7 @@ async def _open_artifact_for_streaming(
     service: GenerationService,
     artifact_id: str,
 ) -> Any:
-    open_task = asyncio.create_task(
-        asyncio.to_thread(service.open_artifact, artifact_id)
-    )
+    open_task = asyncio.create_task(asyncio.to_thread(service.open_artifact, artifact_id))
     try:
         return await asyncio.shield(open_task)
     except asyncio.CancelledError:
@@ -145,7 +146,7 @@ class GenerationRequest(BaseModel):
     voice_id: str | None = None
     reference_id: str | None = None
     saved_voice_id: str | None = None
-    text: str
+    text: str = Field(max_length=MAX_SYNTHESIS_TEXT_CHARS)
     retain_artifact: bool | None = None
     speed: float | None = Field(
         default=None,
@@ -438,13 +439,12 @@ class VoiceListWorkerErrorApiError(PublicApiError):
         )
 
 
-_NOT_FOUND: dict[int | str, dict[str, Any]] = {
-    int(HTTPStatus.NOT_FOUND): {"model": ErrorEnvelope}
-}
+_NOT_FOUND: dict[int | str, dict[str, Any]] = {int(HTTPStatus.NOT_FOUND): {"model": ErrorEnvelope}}
 _GENERATION_ERRORS: dict[int | str, dict[str, Any]] = {
     int(HTTPStatus.NOT_FOUND): {"model": ErrorEnvelope},
     int(HTTPStatus.UNPROCESSABLE_ENTITY): {"model": ErrorEnvelope},
     int(HTTPStatus.SERVICE_UNAVAILABLE): {"model": ErrorEnvelope},
+    int(HTTPStatus.REQUEST_ENTITY_TOO_LARGE): {"model": ErrorEnvelope},
 }
 _ARTIFACT_DELETE_ERRORS: dict[int | str, dict[str, Any]] = {
     int(HTTPStatus.NOT_FOUND): {"model": ErrorEnvelope},
@@ -520,14 +520,16 @@ async def preview_voice(payload: VoicePreviewRequest, request: Request) -> Respo
     status_code=HTTPStatus.ACCEPTED,
     responses=_GENERATION_ERRORS,
 )
-async def create_generation(
-    payload: GenerationRequest, request: Request
-) -> GenerationJobResponse:
+async def create_generation(payload: GenerationRequest, request: Request) -> GenerationJobResponse:
     if (
         (payload.voice_id is not None and not payload.voice_id)
         or (payload.reference_id is not None and not payload.reference_id)
         or (payload.saved_voice_id is not None and not payload.saved_voice_id)
-        or sum(value is not None for value in (payload.voice_id, payload.reference_id, payload.saved_voice_id)) != 1
+        or sum(
+            value is not None
+            for value in (payload.voice_id, payload.reference_id, payload.saved_voice_id)
+        )
+        != 1
     ):
         raise ReferenceRequestInvalidApiError
     service: GenerationService = request.app.state.generation_service
@@ -540,8 +542,11 @@ async def create_generation(
             text=payload.text,
             retain_artifact=payload.retain_artifact,
             correlation_id=request.state.correlation_id,
-            options=SynthesisOptions(speed=payload.speed, pitch=payload.pitch, volume=payload.volume)
-            if any(value is not None for value in (payload.speed, payload.pitch, payload.volume)) else None,
+            options=SynthesisOptions(
+                speed=payload.speed, pitch=payload.pitch, volume=payload.volume
+            )
+            if any(value is not None for value in (payload.speed, payload.pitch, payload.volume))
+            else None,
         )
     except GenerationModelNotFoundError as error:
         raise GenerationModelNotFoundApiError from error
@@ -595,6 +600,40 @@ async def cancel_generation(job_id: str, request: Request) -> GenerationJobRespo
 
 
 @router.post(
+    "/generations/{job_id}/retry",
+    response_model=GenerationJobResponse,
+    status_code=HTTPStatus.ACCEPTED,
+    responses={**_GENERATION_ERRORS, int(HTTPStatus.CONFLICT): {"model": ErrorEnvelope}},
+)
+async def retry_generation(job_id: str, request: Request) -> GenerationJobResponse:
+    service: GenerationService = request.app.state.generation_service
+    try:
+        job = await service.retry(job_id, correlation_id=request.state.correlation_id)
+    except GenerationJobNotFoundError as error:
+        raise GenerationNotFoundApiError from error
+    except GenerationRetryError as error:
+        raise PublicApiError(
+            status_code=HTTPStatus.CONFLICT,
+            code="generation_not_retryable",
+            message=str(error),
+            source="generation",
+        ) from error
+    except GenerationModelNotFoundError as error:
+        raise GenerationModelNotFoundApiError from error
+    except GenerationVoiceNotFoundError as error:
+        raise VoiceNotFoundApiError from error
+    except GenerationReferenceNotFoundError as error:
+        raise GenerationReferenceNotFoundApiError from error
+    except GenerationRequestError as error:
+        raise GenerationRequestInvalidApiError(str(error)) from error
+    except GenerationCapabilityError as error:
+        raise GenerationCapabilityUnsupportedApiError from error
+    except WorkerOperationError as error:
+        raise GenerationWorkerUnavailableApiError from error
+    return _job_response(job)
+
+
+@router.post(
     "/generations/{job_id}/alignment",
     response_model=AlignmentResponse,
     responses=_GENERATION_ERRORS,
@@ -642,7 +681,15 @@ async def stream_generation_pcm(job_id: str, request: Request) -> StreamingRespo
         service.get(job_id)
     except GenerationJobNotFoundError as error:
         raise GenerationNotFoundApiError from error
-    return StreamingResponse(stream, media_type="application/octet-stream", headers={"X-Audio-Sample-Rate": "48000", "X-Audio-Channels": "1", "X-Audio-Encoding": "s16le"})
+    return StreamingResponse(
+        stream,
+        media_type="application/octet-stream",
+        headers={
+            "X-Audio-Sample-Rate": "48000",
+            "X-Audio-Channels": "1",
+            "X-Audio-Encoding": "s16le",
+        },
+    )
 
 
 @router.get(
@@ -709,7 +756,7 @@ async def head_artifact(artifact_id: str, request: Request) -> Response:
     return await download_artifact(artifact_id, request)
 
 
-def _snapshot_size(handle: Any) -> int:
+def _snapshot_size(handle: IO[bytes] | _ArtifactHandleOwner) -> int:
     position = handle.tell()
     handle.seek(0, 2)
     size = handle.tell()
@@ -749,7 +796,9 @@ def _parse_single_range(value: str | None, size: int) -> tuple[int, int] | None:
     return start, min(end, size - 1)
 
 
-def _stream_artifact(handle: Any, *, start: int = 0, length: int | None = None):
+def _stream_artifact(
+    handle: IO[bytes] | _ArtifactHandleOwner, *, start: int = 0, length: int | None = None
+) -> Iterator[bytes]:
     handle.seek(start)
     remaining = length
     while remaining != 0:

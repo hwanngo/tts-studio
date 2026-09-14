@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -16,6 +17,21 @@ import pytest
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _BUILD_SCRIPT = _REPOSITORY_ROOT / "scripts" / "build_distribution.py"
+_CSS_URL = re.compile(r"url\(\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s)]+))\s*\)", re.IGNORECASE)
+_CSS_IMPORT = re.compile(r"@import\s+(?:\"([^\"]*)\"|'([^']*)')", re.IGNORECASE)
+_HTML_URL_ATTRIBUTE = re.compile(
+    r"\b(?:href|src)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))", re.IGNORECASE
+)
+
+
+def _remote_urls(document: str) -> tuple[str, ...]:
+    matches = (
+        *_CSS_URL.findall(document),
+        *_CSS_IMPORT.findall(document),
+        *_HTML_URL_ATTRIBUTE.findall(document),
+    )
+    urls = tuple(dict.fromkeys(next(value for value in match if value) for match in matches))
+    return tuple(url for url in urls if url.casefold().startswith(("http:", "https:", "//")))
 
 
 def _environment_executable(environment: Path, name: str) -> Path:
@@ -57,22 +73,26 @@ def _wait_for_json(url: str, server: subprocess.Popen[str]) -> tuple[int, dict[s
 
 
 def test_installed_wheel_serves_web_ui_and_api(tmp_path: Path) -> None:
-    distribution_dir = tmp_path / "dist"
+    provided_dist = os.environ.get("TTS_STUDIO_TEST_DIST_DIR")
+    distribution_dir = (
+        Path(provided_dist).resolve(strict=True) if provided_dist else tmp_path / "dist"
+    )
     environment = tmp_path / "installed"
     worker_environment = tmp_path / "worker-installed"
     data_dir = tmp_path / "data"
 
-    subprocess.run(
-        [
-            sys.executable,
-            str(_BUILD_SCRIPT),
-            "--include-test-adapters",
-            "--out-dir",
-            str(distribution_dir),
-        ],
-        cwd=_REPOSITORY_ROOT,
-        check=True,
-    )
+    if not provided_dist:
+        subprocess.run(
+            [
+                sys.executable,
+                str(_BUILD_SCRIPT),
+                "--include-test-adapters",
+                "--out-dir",
+                str(distribution_dir),
+            ],
+            cwd=_REPOSITORY_ROOT,
+            check=True,
+        )
     root_wheels = tuple(distribution_dir.glob("tts_studio-*.whl"))
     protocol_wheels = tuple(distribution_dir.glob("tts_studio_protocol-*.whl"))
     worker_sdk_wheels = tuple(distribution_dir.glob("tts_studio_worker_sdk-*.whl"))
@@ -97,9 +117,21 @@ def test_installed_wheel_serves_web_ui_and_api(tmp_path: Path) -> None:
             name for name in root_names if name.endswith(".dist-info/METADATA")
         )
         root_metadata = root_wheel.read(root_metadata_name).decode("utf-8")
+        root_index_name = next(name for name in root_names if name.endswith("/static/index.html"))
+        root_index = root_wheel.read(root_index_name).decode("utf-8")
+        root_styles = "\n".join(
+            root_wheel.read(name).decode("utf-8")
+            for name in root_names
+            if "/static/assets/" in name and name.endswith(".css")
+        )
     assert not any("tts_studio_vieneu_worker" in name for name in root_names)
     assert not any("tts_studio_worker_sdk" in name for name in root_names)
     assert "Requires-Dist: tts-studio-worker-sdk" not in root_metadata
+    assert "License-Expression: MIT" in root_metadata
+    assert "License-File: LICENSE" in root_metadata
+    assert any(name.endswith(".dist-info/licenses/LICENSE") for name in root_names)
+    assert _remote_urls(root_index) == ()
+    assert _remote_urls(root_styles) == ()
     with zipfile.ZipFile(vieneu_wheels[0]) as vieneu_wheel:
         vieneu_names = set(vieneu_wheel.namelist())
         vieneu_metadata = next(
@@ -305,9 +337,7 @@ def test_installed_wheel_serves_web_ui_and_api(tmp_path: Path) -> None:
         env=isolated_environment,
     )
     try:
-        system_status, system = _wait_for_json(
-            f"http://127.0.0.1:{port}/api/v1/system", server
-        )
+        system_status, system = _wait_for_json(f"http://127.0.0.1:{port}/api/v1/system", server)
         with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:
             page_status = response.status
             page = response.read().decode("utf-8")

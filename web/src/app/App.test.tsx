@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, expect, test, vi } from "vitest";
 import i18n from "../i18n";
@@ -244,4 +244,115 @@ test("sidebar theme toggle updates the Settings page selection", async () => {
   await screen.findByRole("heading", { name: "Settings" });
   fireEvent.click(screen.getByRole("button", { name: "Switch to dark mode" }));
   expect(screen.getByRole("radio", { name: "Dark" })).toBeChecked();
+});
+
+test("prompts for a bearer token and retries the Core request without persisting the secret", async () => {
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const headers = init?.headers as Record<string, string> | undefined;
+    if (headers?.Authorization !== "Bearer browser-secret") {
+      return Promise.resolve(new Response(JSON.stringify({
+        error: {
+          code: "authentication_failed",
+          correlation_id: "corr-auth",
+          details: {},
+          message: "Authentication failed.",
+          retryable: false,
+          source: "authentication",
+        },
+      }), { status: 401, headers: { "Content-Type": "application/json" } }));
+    }
+    const body = url.endsWith("/system") ? systemStatus
+      : url.endsWith("/models") || url.endsWith("/generations") ? []
+      : url.endsWith("/runtime") ? {
+        version: "0.1.0", host: "192.0.2.10", port: 7860, data_dir: "/workspace/.tts-studio",
+        generation_status: "idle", active_generations: {}, workers: [], storage_accessible: true,
+        database_accessible: true,
+      }
+      : {
+        retain_audio_by_default: true, artifact_max_age_days: null,
+        artifact_max_storage_bytes: null, api_token_env: "TTS_STUDIO_API_TOKEN",
+        host: "192.0.2.10", port: 7860, restart_required: false,
+        retention: { retained_count: 0, retained_bytes: 0, max_age_days: null, max_storage_bytes: null },
+      };
+    return Promise.resolve(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<MemoryRouter><App /></MemoryRouter>);
+
+  expect(await screen.findByRole("dialog", { name: "Connect to Core" })).toBeVisible();
+  const tokenField = screen.getByLabelText("API token");
+  expect(tokenField).toHaveFocus();
+  expect(tokenField).toHaveAttribute("autocomplete", "current-password");
+  fireEvent.change(tokenField, { target: { value: "browser-secret" } });
+  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+  expect(await screen.findByText("Core online")).toBeVisible();
+  expect(fetchMock.mock.calls.some(([, init]) => (
+    (init?.headers as Record<string, string> | undefined)?.Authorization === "Bearer browser-secret"
+  ))).toBe(true);
+  expect(localStorage.getItem("tts-studio-api-token")).toBeNull();
+});
+
+test("does not reopen the token prompt when an invalidated initial status request fails after login", async () => {
+  type AuthenticationErrorEnvelope = {
+    error: {
+      code: string;
+      correlation_id: string;
+      details: Record<string, never>;
+      message: string;
+      retryable: boolean;
+      source: string;
+    };
+  };
+  let resolveInitialError!: (value: AuthenticationErrorEnvelope) => void;
+  const initialError = new Promise<AuthenticationErrorEnvelope>((resolve) => { resolveInitialError = resolve; });
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = init?.headers as Record<string, string> | undefined;
+    if (fetchMock.mock.calls.length === 1) {
+      return Promise.resolve({
+        ok: false,
+        status: 401,
+        json: () => initialError,
+      } as Response);
+    }
+    if (headers?.Authorization === "Bearer newer-secret") {
+      return Promise.resolve(new Response(JSON.stringify(systemStatus), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<MemoryRouter><App /></MemoryRouter>);
+
+  const tokenField = await screen.findByLabelText("API token");
+  fireEvent.change(tokenField, { target: { value: "newer-secret" } });
+  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+  expect(await screen.findByText("Core online")).toBeVisible();
+
+  await act(async () => {
+    resolveInitialError({
+      error: {
+        code: "authentication_failed",
+        correlation_id: "corr-stale-initial",
+        details: {},
+        message: "Authentication failed.",
+        retryable: false,
+        source: "authentication",
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+  });
+
+  expect(screen.queryByRole("dialog", { name: "Connect to Core" })).toBeNull();
+  expect(screen.getByText("Core online")).toBeVisible();
 });

@@ -176,7 +176,9 @@ async def get_model(model_id: str, request: Request) -> ModelInstallationRespons
     return _model_response(model)
 
 
-@router.patch("/{model_id}/replicas", response_model=ModelInstallationResponse, responses=_MODEL_LOOKUP_ERRORS)
+@router.patch(
+    "/{model_id}/replicas", response_model=ModelInstallationResponse, responses=_MODEL_LOOKUP_ERRORS
+)
 async def update_model_replicas(
     model_id: str, payload: ReplicaConfigurationRequest, request: Request
 ) -> ModelInstallationResponse:

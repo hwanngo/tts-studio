@@ -6,11 +6,13 @@ import functools
 import http.client
 import json
 import socket
+import ssl
 import threading
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import IO, Any
 from urllib.parse import urlsplit
 
 from tts_studio_worker_sdk.egress import (
@@ -125,7 +127,13 @@ def _origin(url: str) -> tuple[str, str, int | None]:
     parsed = urlsplit(url)
     port = parsed.port
     if port is None:
-        port = 443 if parsed.scheme.lower() == "https" else 80 if parsed.scheme.lower() == "http" else None
+        port = (
+            443
+            if parsed.scheme.lower() == "https"
+            else 80
+            if parsed.scheme.lower() == "http"
+            else None
+        )
     return parsed.scheme.lower(), (parsed.hostname or "").lower(), port
 
 
@@ -154,39 +162,55 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
     def connect(self) -> None:
         self.sock = _connect_pinned(self.host, self.port, self.timeout, "http")
 
-    def request(self, *args, **kwargs) -> None:
+    def request(self, *args: Any, **kwargs: Any) -> None:
         _raise_if_cancelled(_current_cancellation())
         super().request(*args, **kwargs)
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    # CPython initializes this SSLContext; typeshed omits the private attribute.
+    _context: ssl.SSLContext
+
     def connect(self) -> None:
         self.sock = _connect_pinned(self.host, self.port, self.timeout, "https")
         _raise_if_cancelled(_current_cancellation())
         self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
 
-    def request(self, *args, **kwargs) -> None:
+    def request(self, *args: Any, **kwargs: Any) -> None:
         _raise_if_cancelled(_current_cancellation())
         super().request(*args, **kwargs)
 
 
 class _PinnedHTTPHandler(urllib.request.HTTPHandler):
-    def http_open(self, req):
+    def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
         return self.do_open(_PinnedHTTPConnection, req)
 
 
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
-    def https_open(self, req):
+    # HTTPSHandler likewise stores the verified TLS context in CPython.
+    _context: ssl.SSLContext
+
+    def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
         return self.do_open(_PinnedHTTPSConnection, req, context=self._context)
 
 
 class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
         try:
             validate_provider_egress(newurl)
         except ProviderEgressError as error:
             raise ProviderRequestError(
-                "provider_egress_rejected", "The provider destination is not permitted.", retryable=False
+                "provider_egress_rejected",
+                "The provider destination is not permitted.",
+                retryable=False,
             ) from error
         if _origin(req.full_url) != _origin(newurl):
             raise ProviderRequestError(
@@ -203,9 +227,17 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         return redirected
 
 
-async def synthesize(*, base_url: str, api_key: str, model: str, text: str, voice: str,
-                     speed: float | None = None, timeout: float = 60.0,
-                     cancellation: ProviderCancellation | None = None) -> ProviderSynthesis:
+async def synthesize(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    text: str,
+    voice: str,
+    speed: float | None = None,
+    timeout: float = 60.0,
+    cancellation: ProviderCancellation | None = None,
+) -> ProviderSynthesis:
     cancellation = cancellation or ProviderCancellation()
     loop = asyncio.get_running_loop()
     request = functools.partial(
@@ -267,9 +299,7 @@ def _request(
 ) -> ProviderSynthesis:
     _REQUEST_CONTEXT.cancellation = cancellation
     try:
-        return _request_inner(
-            base_url, api_key, model, text, voice, speed, timeout, cancellation
-        )
+        return _request_inner(base_url, api_key, model, text, voice, speed, timeout, cancellation)
     finally:
         with contextlib.suppress(AttributeError):
             del _REQUEST_CONTEXT.cancellation
@@ -286,22 +316,32 @@ def _request_inner(
     cancellation: ProviderCancellation | None = None,
 ) -> ProviderSynthesis:
     if len(text) > MAX_SYNTHESIS_TEXT_CHARS:
-        raise ProviderRequestError("input_too_large", "The synthesis input is too large.", retryable=False)
+        raise ProviderRequestError(
+            "input_too_large", "The synthesis input is too large.", retryable=False
+        )
     if cancellation is not None and cancellation.cancelled():
         raise _cancelled_provider_error()
     try:
         validate_provider_egress(base_url)
     except ProviderEgressError as error:
         raise ProviderRequestError(
-            "provider_egress_rejected", "The provider destination is not permitted.", retryable=False
+            "provider_egress_rejected",
+            "The provider destination is not permitted.",
+            retryable=False,
         ) from error
     _raise_if_cancelled(cancellation)
-    payload = {"model": model, "input": text, "voice": voice, "response_format": "wav"}
+    payload: dict[str, str | float] = {
+        "model": model,
+        "input": text,
+        "voice": voice,
+        "response_format": "wav",
+    }
     if speed is not None:
         payload["speed"] = speed
     body = json.dumps(payload).encode()
     request = urllib.request.Request(
-        f"{base_url.rstrip('/')}/audio/speech", data=body,
+        f"{base_url.rstrip('/')}/audio/speech",
+        data=body,
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         method="POST",
     )
@@ -335,7 +375,7 @@ def _request_inner(
                     total += len(chunk)
                     if total > 20 * 1024 * 1024:
                         break
-                payload = b"".join(chunks)
+                audio_payload = b"".join(chunks)
             finally:
                 if cancellation is not None:
                     cancellation.detach()
@@ -343,20 +383,34 @@ def _request_inner(
         raise
     except ProviderEgressError as error:
         raise ProviderRequestError(
-            "provider_egress_rejected", "The provider destination is not permitted.", retryable=False
+            "provider_egress_rejected",
+            "The provider destination is not permitted.",
+            retryable=False,
         ) from error
     except urllib.error.HTTPError as error:
         if error.code in {401, 403}:
-            raise ProviderRequestError("provider_authentication_failed", "The provider rejected authentication.", retryable=False) from error
+            raise ProviderRequestError(
+                "provider_authentication_failed",
+                "The provider rejected authentication.",
+                retryable=False,
+            ) from error
         if error.code == 429:
-            raise ProviderRequestError("provider_rate_limited", "The provider rate limit was reached.", retryable=True) from error
-        raise ProviderRequestError("provider_unavailable", "The provider returned an unavailable response.", retryable=True) from error
+            raise ProviderRequestError(
+                "provider_rate_limited", "The provider rate limit was reached.", retryable=True
+            ) from error
+        raise ProviderRequestError(
+            "provider_unavailable", "The provider returned an unavailable response.", retryable=True
+        ) from error
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         if cancellation is not None and cancellation.cancelled():
             raise _cancelled_provider_error() from error
-        raise ProviderRequestError("provider_unavailable", "The provider could not be reached.", retryable=True) from error
+        raise ProviderRequestError(
+            "provider_unavailable", "The provider could not be reached.", retryable=True
+        ) from error
     try:
-        rate, frames, pcm = validate_wav(payload)
+        rate, frames, pcm = validate_wav(audio_payload)
     except ProviderAudioError as error:
-        raise ProviderRequestError("provider_invalid_audio", "The provider returned unsupported audio.", retryable=False) from error
+        raise ProviderRequestError(
+            "provider_invalid_audio", "The provider returned unsupported audio.", retryable=False
+        ) from error
     return ProviderSynthesis(rate, frames, pcm)

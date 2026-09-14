@@ -35,7 +35,7 @@ async function mockSettingsApi(page: import("@playwright/test").Page, options: S
     if (options.slow) await new Promise((resolve) => setTimeout(resolve, 350));
     if (url.pathname === "/api/v1/system") return route.fulfill({ json: { version: "0.1.0", status: "healthy", data_dir: "/workspace/.tts-studio", workers: [] } });
     if (url.pathname === "/api/v1/settings" && options.settingsStatus) {
-      return route.fulfill({ status: options.settingsStatus, json: { error: { message: "Settings unavailable", code: "unavailable", retryable: true } } });
+      return route.fulfill({ status: options.settingsStatus, json: { error: { message: "Settings unavailable", code: "request_failed", retryable: true } } });
     }
     if (url.pathname === "/api/v1/settings" && request.method() === "PATCH") return route.fulfill({ json: settings });
     if (url.pathname === "/api/v1/settings/retention/clear") {
@@ -64,7 +64,7 @@ test("renders Settings responsively, synchronizes themes, and moves focus after 
   await expect(page.getByLabel("Resolved data directory")).toHaveValue("/workspace/.tts-studio");
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", await page.evaluate(() => document.documentElement.clientWidth));
 
-  await page.getByRole("button", { name: "Dark theme" }).click();
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.getByRole("radio", { name: "Light" }).check();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
@@ -101,15 +101,15 @@ test("reports successful save and clear results through public requests", async 
 test("shows loading and error states without exposing secrets or paths", async ({ page }) => {
   await mockSettingsApi(page, { slow: true });
   await page.goto("/settings");
-  await expect(page.getByRole("status", { name: "Settings loading" })).toBeVisible();
+  await expect(page.getByRole("status", { name: "Loading settings…" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
-  await expect(page.getByText("TTS_STUDIO_API_TOKEN")).toBeVisible();
+  await expect(page.getByLabel("API token environment variable")).toHaveValue("TTS_STUDIO_API_TOKEN");
   await expect(page.locator("body")).not.toContainText("secret-value");
 
   await page.unrouteAll({ behavior: "ignoreErrors" });
   await mockSettingsApi(page, { settingsStatus: 503 });
   await page.reload();
-  await expect(page.getByRole("alert")).toContainText("Settings unavailable");
+  await expect(page.getByRole("alert")).toContainText("The request failed");
   await expect(page.getByRole("button", { name: "Save settings" })).toBeDisabled();
 });
 
@@ -141,6 +141,6 @@ test("requires confirmation and reports unsupported lifecycle operations", async
   await page.getByRole("button", { name: "Restart service" }).click();
   await expect(page.getByText("Confirm restarting service?")).toBeVisible();
   await page.getByRole("button", { name: "Confirm restart" }).click();
-  await expect(page.getByRole("alert")).toContainText("unsupported");
+  await expect(page.getByRole("alert")).toContainText("Service management is not supported");
   await expect(page.getByRole("button", { name: "Restart service" })).toHaveCount(1);
 });

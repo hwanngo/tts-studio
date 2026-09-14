@@ -6,7 +6,9 @@ import logging
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from http import HTTPStatus
+from ipaddress import ip_address
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -15,6 +17,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException
+
+from tts_studio.generation.limits import MAX_GENERATION_BODY_BYTES
 
 _CORRELATION_HEADER = "X-Correlation-ID"
 _LOGGER = logging.getLogger(__name__)
@@ -136,9 +140,7 @@ class ModelValidationApiError(PublicApiError):
     def __init__(self, code: str, *, retryable: bool) -> None:
         super().__init__(
             status_code=(
-                HTTPStatus.SERVICE_UNAVAILABLE
-                if retryable
-                else HTTPStatus.UNPROCESSABLE_ENTITY
+                HTTPStatus.SERVICE_UNAVAILABLE if retryable else HTTPStatus.UNPROCESSABLE_ENTITY
             ),
             code=code,
             message="The engine adapter could not validate the model request.",
@@ -169,8 +171,16 @@ class ModelInUseApiError(PublicApiError):
         )
 
 
-def install_error_handlers(app: FastAPI, *, api_token: str | None = None) -> None:
+def install_error_handlers(
+    app: FastAPI,
+    *,
+    api_token: str | None = None,
+    listener_host: str = "127.0.0.1",
+    listener_port: int = 7860,
+) -> None:
     """Install the common public error models, handlers, and correlation header."""
+
+    expected_authority = _listener_authority(listener_host, listener_port)
 
     @app.middleware("http")
     async def correlate_request(
@@ -179,11 +189,37 @@ def install_error_handlers(app: FastAPI, *, api_token: str | None = None) -> Non
     ) -> Response:
         correlation_id = str(uuid4())
         request.state.correlation_id = correlation_id
+        if not _host_is_allowed(request, listener_host, listener_port, expected_authority):
+            return _error_response(
+                request,
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="host_not_allowed",
+                message="Request Host is not allowed.",
+                source="http",
+                retryable=False,
+            )
+        origin = request.headers.get("origin")
+        expected_origin = f"http://{request.headers.get('host', '').casefold()}"
+        if (
+            request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            and origin is not None
+            and origin != expected_origin
+        ):
+            return _error_response(
+                request,
+                status_code=HTTPStatus.FORBIDDEN,
+                code="origin_not_allowed",
+                message="Request Origin is not allowed.",
+                source="http",
+                retryable=False,
+            )
         if api_token is not None and _is_api_request(request):
             authorization = request.headers.get("authorization", "")
             scheme, _, supplied = authorization.partition(" ")
-            if scheme.casefold() != "bearer" or not supplied or not secrets.compare_digest(
-                supplied, api_token
+            if (
+                scheme.casefold() != "bearer"
+                or not supplied
+                or not secrets.compare_digest(supplied, api_token)
             ):
                 return _error_response(
                     request,
@@ -194,6 +230,24 @@ def install_error_handlers(app: FastAPI, *, api_token: str | None = None) -> Non
                     retryable=False,
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+        if request.method == "POST" and request.url.path.rstrip("/") in {
+            "/api/v1/generations",
+            "/v1/audio/speech",
+        }:
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > MAX_GENERATION_BODY_BYTES:
+                    return _error_response(
+                        request,
+                        status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                        code="request_body_too_large",
+                        message="Generation request body exceeds 128 KiB.",
+                        source="http",
+                        retryable=False,
+                    )
+                body.extend(chunk)
+            # Starlette's cached Request passes these bounded bytes to the router.
+            request._body = bytes(body)
         response = await call_next(request)
         response.headers[_CORRELATION_HEADER] = correlation_id
         return response
@@ -291,6 +345,47 @@ def install_error_handlers(app: FastAPI, *, api_token: str | None = None) -> Non
 def _is_api_request(request: Request) -> bool:
     path = request.url.path
     return path in {"/api", "/v1"} or path.startswith(("/api/", "/v1/"))
+
+
+def _listener_authority(host: str, port: int) -> str:
+    normalized_host = host.casefold()
+    if ":" in normalized_host and not normalized_host.startswith("["):
+        normalized_host = f"[{normalized_host}]"
+    if port == 80:
+        return normalized_host
+    return f"{normalized_host}:{port}"
+
+
+def _host_is_allowed(
+    request: Request,
+    listener_host: str,
+    listener_port: int,
+    expected_authority: str,
+) -> bool:
+    supplied = request.headers.get("host", "").casefold()
+    if supplied == expected_authority:
+        return True
+    if listener_host in {"0.0.0.0", "::"} and _numeric_authority_matches_listener(
+        supplied, listener_host, listener_port
+    ):
+        return True
+    # HTTPX's in-process ASGI transport uses this reserved authority in existing
+    # route tests. A network ASGI server supplies its actual listener address.
+    return supplied == "test" and request.scope.get("server") == ("test", None)
+
+
+def _numeric_authority_matches_listener(authority: str, listener_host: str, port: int) -> bool:
+    try:
+        parsed = urlsplit(f"http://{authority}")
+        host = parsed.hostname
+        supplied_port = parsed.port or 80
+        if host is None or parsed.path or parsed.query or parsed.fragment:
+            return False
+        address = ip_address(host)
+    except ValueError:
+        return False
+    listener_version = 4 if listener_host == "0.0.0.0" else 6
+    return address.version == listener_version and supplied_port == port
 
 
 def _correlation_id(request: Request) -> str:

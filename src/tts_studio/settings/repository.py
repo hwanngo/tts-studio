@@ -49,7 +49,11 @@ class CoreSettingsRepository:
             current_row = connection.execute(
                 "SELECT * FROM core_settings WHERE singleton = 1"
             ).fetchone()
-            current = _settings(current_row) if current_row is not None else CoreSettings(True, None, None, None)
+            current = (
+                _settings(current_row)
+                if current_row is not None
+                else CoreSettings(True, None, None, None)
+            )
             values = {
                 field: getattr(current, field) if value is _UNSET else value
                 for field, value in supplied.items()

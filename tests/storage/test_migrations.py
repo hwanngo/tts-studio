@@ -24,6 +24,38 @@ def _apply_schema(connection: sqlite3.Connection, target_version: int) -> None:
         connection.execute(f"PRAGMA user_version = {version}")
 
 
+def test_upgrade_redacts_only_nonretained_terminal_generation_text(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    with sqlite3.connect(layout.database_path) as connection:
+        _apply_schema(connection, 12)
+        for state in (
+            "queued",
+            "loading",
+            "generating",
+            "finalizing",
+            "completed",
+            "failed",
+            "cancelled",
+        ):
+            for retain in (0, 1):
+                connection.execute(
+                    "INSERT INTO generation_jobs (id, model_id, engine_id, voice_id, text, retain_artifact, state, correlation_id, created_at, updated_at) VALUES (?, 'model', 'engine', 'voice', 'private text', ?, ?, 'correlation', 'now', 'now')",
+                    (f"{state}-{retain}", retain, state),
+                )
+    Database(layout.database_path).migrate()
+    with sqlite3.connect(layout.database_path) as connection:
+        rows = connection.execute(
+            "SELECT text, retain_artifact, state FROM generation_jobs"
+        ).fetchall()
+        for text, retain, state in rows:
+            assert text == (
+                ""
+                if not retain and state in {"completed", "failed", "cancelled"}
+                else "private text"
+            )
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 def test_fresh_database_applies_model_management_schema(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
 
@@ -44,7 +76,7 @@ def test_fresh_database_applies_model_management_schema(tmp_path: Path) -> None:
             ).fetchall()
         }
 
-    assert version == 12
+    assert version == 13
     assert {
         "engine_installations",
         "model_installations",
@@ -76,7 +108,7 @@ def test_phase_one_database_upgrades_without_losing_existing_data(tmp_path: Path
     Database(layout.database_path).migrate()
 
     with sqlite3.connect(layout.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 12
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 13
         assert connection.execute("SELECT value FROM phase_one_marker").fetchone()[0] == "preserved"
         assert (
             connection.execute(
@@ -109,7 +141,7 @@ def test_phase_two_database_upgrades_to_durable_events(tmp_path: Path) -> None:
             "SELECT last_event_id FROM model_event_cursor WHERE singleton = 1"
         ).fetchone()[0]
 
-        assert version == 12
+        assert version == 13
     assert {"model_events", "model_event_cursor"} <= tables
     assert marker == "preserved"
     assert cursor == 0
@@ -146,7 +178,7 @@ def test_phase_two_development_database_keeps_existing_event_cursor(tmp_path: Pa
             "SELECT last_event_id FROM model_event_cursor WHERE singleton = 1"
         ).fetchone()[0]
 
-        assert version == 12
+        assert version == 13
     assert cursor == 7
 
 
@@ -187,7 +219,7 @@ def test_schema_version_nine_upgrades_settings_without_losing_existing_data(tmp_
     Database(layout.database_path).migrate()
 
     with sqlite3.connect(layout.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 12
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 13
         assert connection.execute(
             "SELECT engine_id, lifecycle_state FROM engine_installations WHERE id = 'engine-1'"
         ).fetchone() == ("provider-engine", "ready")
@@ -227,7 +259,7 @@ def test_schema_version_ten_upgrades_queued_jobs_with_nullable_generation_option
     Database(layout.database_path).migrate()
 
     with sqlite3.connect(layout.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 12
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 13
         assert connection.execute(
             "SELECT id, state, text, speed, pitch, volume FROM generation_jobs "
             "WHERE id = 'queued-job'"
@@ -271,9 +303,7 @@ def test_corrupt_newest_migration_rolls_back_without_losing_schema_v10_data(
         assert connection.execute(
             "SELECT id, state, text FROM generation_jobs WHERE id = 'queued-job'"
         ).fetchone() == ("queued-job", "queued", "preserved text")
-        columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(generation_jobs)")
-        }
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(generation_jobs)")}
         assert {"speed", "pitch", "volume"}.isdisjoint(columns)
 
 
@@ -310,8 +340,10 @@ def test_migration_012_directly_creates_alignment_schema_from_version_11(tmp_pat
 
     with sqlite3.connect(layout.database_path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 12
-        assert [row[1] for row in connection.execute("PRAGMA table_info(generation_alignments)")] == [
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 13
+        assert [
+            row[1] for row in connection.execute("PRAGMA table_info(generation_alignments)")
+        ] == [
             "job_id",
             "artifact_id",
             "state",
@@ -386,13 +418,19 @@ def test_migration_012_directly_creates_alignment_schema_from_version_11(tmp_pat
             "VALUES ('job-artifact-cascade', 'artifact-cascade', 'queued', 'now', 'now')"
         )
         connection.execute("DELETE FROM audio_artifacts WHERE id = 'artifact-cascade'")
-        assert connection.execute(
-            "SELECT COUNT(*) FROM generation_alignments WHERE job_id = 'job-artifact-cascade'"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM generation_alignments WHERE job_id = 'job-artifact-cascade'"
+            ).fetchone()[0]
+            == 0
+        )
         connection.execute("DELETE FROM generation_jobs WHERE id = 'job'")
-        assert connection.execute(
-            "SELECT COUNT(*) FROM generation_alignments WHERE job_id = 'job'"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM generation_alignments WHERE job_id = 'job'"
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_database_connection_boundary_enforces_foreign_keys(tmp_path: Path) -> None:

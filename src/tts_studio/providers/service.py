@@ -19,7 +19,9 @@ class ProviderSecretMissingError(RuntimeError):
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def validate_provider_input(*, kind: str, label: str, base_url: str, model: str, api_key_env: str) -> None:
+def validate_provider_input(
+    *, kind: str, label: str, base_url: str, model: str, api_key_env: str
+) -> None:
     if kind != "openai_compatible":
         raise InvalidProviderProfileError("kind must be 'openai_compatible'")
     if not label.strip() or len(label.strip()) > 120:

@@ -43,6 +43,7 @@ export const API_ERROR_CODES = [
   "generation_failed",
   "generation_cancelled",
   "generation_request_invalid",
+  "host_not_allowed",
   "revision_not_found",
   "model_load_failed",
   "model_unload_failed",
@@ -57,6 +58,7 @@ export const API_ERROR_CODES = [
   "model_variant_unavailable",
   "internal_error",
   "not_found",
+  "origin_not_allowed",
   "provider_configuration_missing",
   "provider_in_use",
   "provider_not_found",
@@ -88,6 +90,26 @@ export type SystemStatusResult =
   | { state: "loading" }
   | { state: "ready"; value: SystemStatus }
   | { state: "error"; message: string };
+
+let browserApiToken: string | null = null;
+const authenticationFailureListeners = new Set<() => void>();
+
+export function setBrowserApiToken(token: string): void {
+  browserApiToken = token;
+}
+
+export function clearBrowserApiToken(): void {
+  browserApiToken = null;
+}
+
+export function hasBrowserApiToken(): boolean {
+  return browserApiToken !== null;
+}
+
+export function subscribeToAuthenticationFailure(listener: () => void): () => void {
+  authenticationFailureListeners.add(listener);
+  return () => authenticationFailureListeners.delete(listener);
+}
 
 export async function fetchSystemStatus(signal?: AbortSignal): Promise<SystemStatus> {
   return requestJson<SystemStatus>("/api/v1/system", { signal }, "Core status request");
@@ -206,6 +228,31 @@ export function fetchSavedVoices(modelId: string, signal?: AbortSignal): Promise
   );
 }
 
+export type ModelVoice = VoiceResponse & { source: "preset" | "saved" };
+
+/**
+ * Resolve the two public Voice catalogs as one deterministic list.  Preset Voices
+ * retain their API order, then Saved Voices retain theirs.  A catalog failure does
+ * not hide the other usable catalog; callers receive an error only when neither
+ * request succeeds.
+ */
+export async function fetchModelVoices(modelId: string, signal?: AbortSignal): Promise<ModelVoice[]> {
+  const [presetResult, savedResult] = await Promise.allSettled([
+    fetchVoices(modelId, signal),
+    fetchSavedVoices(modelId, signal),
+  ]);
+  const presets = presetResult.status === "fulfilled"
+    ? presetResult.value.map((voice) => ({ ...voice, source: "preset" as const }))
+    : [];
+  const saved = savedResult.status === "fulfilled"
+    ? savedResult.value.map((voice) => ({ id: `saved:${voice.id}`, label: voice.label, capabilities: ["saved"], source: "saved" as const }))
+    : [];
+  if (presetResult.status === "rejected" && savedResult.status === "rejected") {
+    throw presetResult.reason;
+  }
+  return [...presets, ...saved];
+}
+
 export function fetchProviders(signal?: AbortSignal): Promise<ProviderResponse[]> {
   return requestJson("/api/v1/providers", { signal }, "Provider list request");
 }
@@ -247,11 +294,12 @@ export async function consumeGenerationPcm(
   onChunk: (chunk: Uint8Array) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(
+  const response = await request(
     `/api/v1/generations/${encodeURIComponent(jobId)}/pcm`,
     { signal, headers: { Accept: "application/octet-stream" } },
+    "Live PCM request",
   );
-  if (!response.ok || !response.body) throw new ApiError(`Live PCM request failed with ${response.status}`);
+  if (!response.body) throw new ApiError("Live PCM response did not include a body");
   const reader = response.body.getReader();
   try {
     while (true) {
@@ -332,9 +380,99 @@ const MODEL_EVENT_TYPES = [
 ] as const;
 
 export function subscribeToModelEvents(onEvent: () => void): () => void {
+  if (browserApiToken !== null) return subscribeToAuthenticatedModelEvents(onEvent);
   const source = new EventSource("/api/v1/events");
   for (const eventType of MODEL_EVENT_TYPES) source.addEventListener(eventType, onEvent);
   return () => source.close();
+}
+
+export async function createAuthenticatedMediaUrl(
+  url: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const response = await request(
+    url,
+    { signal, headers: { Accept: "audio/wav" } },
+    "Audio request",
+  );
+  return URL.createObjectURL(await response.blob());
+}
+
+function subscribeToAuthenticatedModelEvents(onEvent: () => void): () => void {
+  const controller = new AbortController();
+  let reconnectTimer: number | undefined;
+  let lastEventId: string | undefined;
+
+  const connect = async () => {
+    try {
+      const response = await request(
+        "/api/v1/events",
+        {
+          signal: controller.signal,
+          headers: {
+            Accept: "text/event-stream",
+            ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}),
+          },
+        },
+        "Model event stream",
+      );
+      lastEventId = await consumeModelEvents(
+        response,
+        onEvent,
+        controller.signal,
+        lastEventId,
+        (eventId) => { lastEventId = eventId; },
+      );
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof ApiError && error.code === "authentication_failed")) {
+        return;
+      }
+    }
+    if (!controller.signal.aborted) reconnectTimer = window.setTimeout(() => void connect(), 1000);
+  };
+
+  void connect();
+  return () => {
+    controller.abort();
+    if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+  };
+}
+
+async function consumeModelEvents(
+  response: Response,
+  onEvent: () => void,
+  signal: AbortSignal,
+  previousEventId?: string,
+  onLastEventId?: (eventId: string) => void,
+): Promise<string | undefined> {
+  if (!response.body) throw new ApiError("Model event stream did not include a body");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let lastEventId = previousEventId;
+  try {
+    while (!signal.aborted) {
+      const next = await reader.read();
+      buffer += decoder.decode(next.value, { stream: !next.done });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) {
+        let eventType = "message";
+        for (const line of block.split(/\r?\n/)) {
+          if (line.startsWith("event:")) eventType = line.slice(6).trimStart();
+          if (line.startsWith("id:")) {
+            lastEventId = line.slice(3).trimStart();
+            onLastEventId?.(lastEventId);
+          }
+        }
+        if ((MODEL_EVENT_TYPES as readonly string[]).includes(eventType)) onEvent();
+      }
+      if (next.done) return lastEventId;
+    }
+    return lastEventId;
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
 }
 
 function jsonRequest(method: string, body?: unknown, signal?: AbortSignal): RequestInit {
@@ -363,11 +501,21 @@ async function request(
   options: RequestInit,
   description: string,
 ): Promise<Response> {
+  const token = browserApiToken;
   const response = await fetch(url, {
     ...options,
-    headers: { Accept: "application/json", ...options.headers },
+    headers: {
+      Accept: "application/json",
+      ...(options.headers as Record<string, string> | undefined),
+      ...(token === null ? {} : { Authorization: `Bearer ${token}` }),
+    },
   });
   if (response.ok) return response;
+
+  if (response.status === 401 && browserApiToken === token) {
+    clearBrowserApiToken();
+    for (const listener of authenticationFailureListeners) listener();
+  }
 
   let envelope: ErrorEnvelope | null = null;
   try {

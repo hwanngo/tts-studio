@@ -69,7 +69,9 @@ class PcmValidator:
         self._format = audio_format
         return audio_format
 
-    def accept_chunk(self, sequence: int | Any, pcm: bytes | bytearray | memoryview | None = None) -> None:
+    def accept_chunk(
+        self, sequence: int | Any, pcm: bytes | bytearray | memoryview | None = None
+    ) -> None:
         if self._finished:
             raise AudioValidationError("audio stream is already finished")
         if self._format is None:

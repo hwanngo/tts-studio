@@ -24,7 +24,9 @@ class CoreSettings:
             (self.artifact_max_age_days, "artifact_max_age_days"),
             (self.artifact_max_storage_bytes, "artifact_max_storage_bytes"),
         ):
-            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value <= 0):
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value <= 0
+            ):
                 raise ValueError(f"{field} must be a positive integer or None")
         if self.api_token_env is not None and (
             not isinstance(self.api_token_env, str)

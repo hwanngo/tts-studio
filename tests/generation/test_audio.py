@@ -65,7 +65,9 @@ def test_validator_requires_header_before_chunk_and_rejects_duplicate_header() -
 
 
 @pytest.mark.parametrize("sequences", [(1,), (0, 2), (0, 0)])
-def test_validator_rejects_sequence_gaps_duplicates_and_nonzero_start(sequences: tuple[int, ...]) -> None:
+def test_validator_rejects_sequence_gaps_duplicates_and_nonzero_start(
+    sequences: tuple[int, ...],
+) -> None:
     validator = PcmValidator()
     validator.accept_header(AudioFormat(48_000, 1, "S16LE"))
 

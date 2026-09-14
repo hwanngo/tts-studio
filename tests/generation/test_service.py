@@ -42,7 +42,7 @@ def _identity_bound_unlink_available() -> bool:
     try:
         libc = identity_module.ctypes.CDLL(None, use_errno=True)
         return libc.funlinkat is not None
-    except (AttributeError, OSError, TypeError):
+    except AttributeError, OSError, TypeError:
         return False
 
 
@@ -215,9 +215,7 @@ class _StrictRuntimeStub:
         self.unload_calls += 1
         if not self.loaded:
             return engine_pb2.UnloadModelResponse(
-                error=engine_pb2.WorkerError(
-                    code="model_not_loaded", message="model is not loaded"
-                )
+                error=engine_pb2.WorkerError(code="model_not_loaded", message="model is not loaded")
             )
         self.loaded = False
         return engine_pb2.UnloadModelResponse(unloaded=True)
@@ -327,13 +325,15 @@ class _LoadFailsWithoutModel(_Lease):
 
 class _SynthesisFailsAndUnloadFails(_Lease):
     def __init__(self) -> None:
-        super().__init__([
-            engine_pb2.SynthesisEvent(
-                error=engine_pb2.WorkerError(
-                    code="synthesis_failed", message="synthesis failed", retryable=True
+        super().__init__(
+            [
+                engine_pb2.SynthesisEvent(
+                    error=engine_pb2.WorkerError(
+                        code="synthesis_failed", message="synthesis failed", retryable=True
+                    )
                 )
-            )
-        ])
+            ]
+        )
         self.unload_calls = 0
 
     async def unload_model(self, model: ModelInstallation) -> None:
@@ -412,9 +412,7 @@ def _events(*, sample_rate: int = 48_000) -> list[engine_pb2.SynthesisEvent]:
         engine_pb2.SynthesisEvent(
             progress=engine_pb2.SynthesisProgress(message="halfway", duration_frames=4)
         ),
-        engine_pb2.SynthesisEvent(
-            result=engine_pb2.SynthesisResult(total_frames=4, duration_ms=0)
-        ),
+        engine_pb2.SynthesisEvent(result=engine_pb2.SynthesisResult(total_frames=4, duration_ms=0)),
     ]
 
 
@@ -454,7 +452,9 @@ def _events_with_empty_chunk() -> list[engine_pb2.SynthesisEvent]:
     ]
 
 
-def _service(tmp_path: Path, lease: _Lease) -> tuple[GenerationService, GenerationRegistry, StorageLayout, EventStore]:
+def _service(
+    tmp_path: Path, lease: _Lease
+) -> tuple[GenerationService, GenerationRegistry, StorageLayout, EventStore]:
     registry, layout, events = _registry(tmp_path)
     service = GenerationService(
         registry,
@@ -471,7 +471,9 @@ def _reference_service(layout: StorageLayout, registry: GenerationRegistry) -> R
     return ReferenceService(Database(layout.database_path), layout)
 
 
-def _validated_reference(reference_service: ReferenceService, *, model_id: str = "model-one") -> str:
+def _validated_reference(
+    reference_service: ReferenceService, *, model_id: str = "model-one"
+) -> str:
     recording = reference_service.create_upload(
         model_id=model_id,
         payload=b"reference bytes",
@@ -494,7 +496,9 @@ def _reference_capabilities() -> WorkerCapabilities:
 
 
 @pytest.mark.asyncio
-async def test_post_refresh_option_capability_failure_is_stable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_post_refresh_option_capability_failure_is_stable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     lease = _Lease(
         _events(),
         capabilities=WorkerCapabilities(
@@ -516,16 +520,25 @@ async def test_post_refresh_option_capability_failure_is_stable(tmp_path: Path, 
         original(current_lease, options)
 
     monkeypatch.setattr(service_module, "_require_option_capabilities", refreshed_capabilities)
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="stable", options=SynthesisOptions(speed=1.2))
+    queued = await service.create(
+        model_id="model-one",
+        voice_id="fake-neutral",
+        text="stable",
+        options=SynthesisOptions(speed=1.2),
+    )
     failed = await service.wait(queued.id)
 
     assert failed.state is GenerationState.FAILED
-    assert failed.error == {"code": "capability_unsupported", "message": "the Worker does not support the speed option", "retryable": False}
+    assert failed.error == {
+        "code": "capability_unsupported",
+        "message": "the Worker does not support the speed option",
+        "retryable": False,
+    }
     await service.close()
 
 
 @pytest.mark.asyncio
-async def test_failed_generation_is_not_marked_retryable_without_native_retry_operation(tmp_path: Path) -> None:
+async def test_retained_transient_worker_failure_is_explicitly_retryable(tmp_path: Path) -> None:
     events = [
         engine_pb2.SynthesisEvent(
             error=engine_pb2.WorkerError(
@@ -535,20 +548,268 @@ async def test_failed_generation_is_not_marked_retryable_without_native_retry_op
     ]
     service, _registry_value, _layout, _events_value = _service(tmp_path, _Lease(events))
 
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="retry safety")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="retry safety"
+    )
     failed = await service.wait(queued.id)
 
     assert failed.state is GenerationState.FAILED
     assert failed.error == {
         "code": "provider_unavailable",
         "message": "The engine Worker failed during synthesis.",
-        "retryable": False,
+        "retryable": True,
     }
     await service.close()
 
 
 @pytest.mark.asyncio
-async def test_preview_preserves_load_failure_and_does_not_unload_unloaded_model(tmp_path: Path) -> None:
+async def test_generation_rejects_oversized_text_before_persistence(tmp_path: Path) -> None:
+    service, registry, _layout, _events_value = _service(tmp_path, _Lease(_events()))
+    try:
+        with pytest.raises(GenerationRequestError, match="10,000"):
+            await service.create(model_id="model-one", voice_id="fake-neutral", text="a" * 10_001)
+        assert registry.list_jobs() == ()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_generation_accepts_ten_thousand_unicode_characters(tmp_path: Path) -> None:
+    lease = _Lease(_events())
+    service, _registry_value, _layout, _events_value = _service(tmp_path, lease)
+    try:
+        job = await service.create(
+            model_id="model-one", voice_id="fake-neutral", text="😀" * 10_000
+        )
+        assert (await service.wait(job.id)).state is GenerationState.COMPLETED
+        assert lease.requests[0].text == "😀" * 10_000
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retain", [False, True])
+@pytest.mark.parametrize("terminal", ["completed", "failed", "cancelled"])
+async def test_terminal_generation_text_retention(
+    tmp_path: Path, retain: bool, terminal: str
+) -> None:
+    events = (
+        _events()
+        if terminal != "failed"
+        else [
+            engine_pb2.SynthesisEvent(
+                error=engine_pb2.WorkerError(code="unavailable", retryable=True)
+            )
+        ]
+    )
+    service, registry, layout, _events_value = _service(tmp_path, _Lease(events))
+    try:
+        job = await service.create(
+            model_id="model-one",
+            voice_id="fake-neutral",
+            text="private transcript",
+            retain_artifact=retain,
+        )
+        if terminal == "cancelled":
+            await service.cancel(job.id)
+        result = await service.wait(job.id)
+        assert result.state.value == terminal
+        assert result.text == ("private transcript" if retain else "")
+        if terminal == "failed":
+            assert result.error is not None
+            assert result.error["retryable"] is retain
+        with Database(layout.database_path).read() as connection:
+            assert (
+                connection.execute(
+                    "SELECT text FROM generation_jobs WHERE id = ?", (job.id,)
+                ).fetchone()[0]
+                == result.text
+            )
+        assert len(registry.list_history()) == int(retain and terminal == "completed")
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_retry_creates_one_successor_and_survives_service_restart(tmp_path: Path) -> None:
+    lease = _Lease(
+        [
+            engine_pb2.SynthesisEvent(
+                error=engine_pb2.WorkerError(code="unavailable", retryable=True)
+            )
+        ]
+    )
+    service, registry, layout, events = _service(tmp_path, lease)
+    original = await service.create(model_id="model-one", voice_id="fake-neutral", text="retry me")
+    await service.wait(original.id)
+    lease.events = _events()
+    try:
+        retries = await asyncio.gather(*(service.retry(original.id) for _ in range(3)))
+        assert len({job.id for job in retries}) == 1
+        assert retries[0].id != original.id
+        completed = await service.wait(retries[0].id)
+        assert completed.state is GenerationState.COMPLETED
+        assert registry.get_job(original.id).state is GenerationState.FAILED
+        assert len(registry.list_jobs()) == 2
+        assert [artifact.job_id for artifact in registry.list_history()] == [completed.id]
+    finally:
+        await service.close()
+    restarted = GenerationService(
+        registry, _Models(_model()), _Pool(lease), layout=layout, event_store=events
+    )
+    try:
+        assert (await restarted.retry(original.id)).id == completed.id
+        assert len(registry.list_history()) == 1
+    finally:
+        await restarted.close()
+
+
+@pytest.mark.asyncio
+async def test_retry_preserves_options_and_revalidates_runtime_capabilities(tmp_path: Path) -> None:
+    lease = _Lease(_events())
+    service, registry, _layout, _events_value = _service(tmp_path, lease)
+    original = registry.create_job(
+        model_id="model-one",
+        engine_id="fake",
+        voice_id="fake-neutral",
+        text="keep options",
+        options=SynthesisOptions(speed=1.25, pitch=-0.5, volume=0.75),
+        correlation_id="original",
+    )
+    registry.mark_recovery_failure(original.id, {"code": "recovery_required", "retryable": True})
+    try:
+        with pytest.raises(GenerationCapabilityError):
+            await service.retry(original.id)
+        assert len(registry.list_jobs()) == 1
+        lease.capabilities = WorkerCapabilities(
+            engine_id="fake",
+            engine_version="0.2.0",
+            max_concurrency=1,
+            supported=frozenset(
+                {"preset_voices", "streaming_synthesis", "speed", "pitch", "volume"}
+            ),
+        )
+        retry = await service.retry(original.id, correlation_id="new-correlation")
+        completed = await service.wait(retry.id)
+        assert completed.state is GenerationState.COMPLETED
+        assert completed.options == SynthesisOptions(speed=1.25, pitch=-0.5, volume=0.75)
+        assert completed.correlation_id == "new-correlation"
+        assert lease.requests[0].options == engine_pb2.SynthesisOptions(
+            speed=1.25, pitch=-0.5, volume=0.75
+        )
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_queued_retry_recovers_after_crash_before_scheduling(tmp_path: Path) -> None:
+    service, registry, _layout, _events_value = _service(tmp_path, _Lease(_events()))
+    original = registry.create_job(
+        model_id="model-one",
+        engine_id="fake",
+        voice_id="fake-neutral",
+        text="recover retry",
+        correlation_id="original",
+    )
+    registry.mark_recovery_failure(original.id, {"code": "recovery_required", "retryable": True})
+    retry = registry.create_job(
+        model_id="model-one",
+        engine_id="fake",
+        voice_id="fake-neutral",
+        text=original.text,
+        correlation_id="retry",
+        retry_of=original.id,
+    )
+    try:
+        await service.recover()
+        assert (await service.retry(original.id)).id == retry.id
+        assert (await service.wait(retry.id)).state is GenerationState.COMPLETED
+        assert len(registry.list_history()) == 1
+        assert len(registry.list_jobs()) == 2
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "completed",
+        "cancelled",
+        "queued",
+        "permanent",
+        "private",
+        "reference",
+        "cleanup",
+        "artifact",
+        "unlinked_artifact",
+    ],
+)
+async def test_retry_refuses_unsafe_or_unsupported_jobs(tmp_path: Path, kind: str) -> None:
+    service, registry, layout, _events_value = _service(tmp_path, _Lease(_events()))
+    job = registry.create_job(
+        model_id="model-one",
+        engine_id="fake",
+        voice_id=None if kind == "reference" else "fake-neutral",
+        reference_id="consumed" if kind == "reference" else None,
+        text="retry safety",
+        retain_artifact=kind != "private",
+        correlation_id="test",
+    )
+    if kind == "reference":
+        registry.clear_reference_id(job.id)
+    if kind in {"completed", "artifact", "unlinked_artifact"}:
+        for state in (
+            GenerationState.LOADING,
+            GenerationState.GENERATING,
+            GenerationState.FINALIZING,
+        ):
+            registry.transition_job(job.id, state)
+        registry.create_artifact(
+            job_id=job.id,
+            path="audio/existing.wav",
+            byte_size=44,
+            sha256="a" * 64,
+            sample_rate=48000,
+            channel_count=1,
+            frame_count=0,
+        )
+    if kind == "unlinked_artifact":
+        with Database(layout.database_path).transaction() as connection:
+            connection.execute(
+                "UPDATE generation_jobs SET artifact_id = NULL WHERE id = ?", (job.id,)
+            )
+    if kind != "queued":
+        state = (
+            GenerationState.COMPLETED
+            if kind == "completed"
+            else GenerationState.CANCELLED
+            if kind == "cancelled"
+            else GenerationState.FAILED
+        )
+        registry.transition_job(
+            job.id,
+            state,
+            error={
+                "code": "cleanup_failed" if kind == "cleanup" else "unavailable",
+                "retryable": kind != "permanent",
+            },
+        )
+    try:
+        with pytest.raises(GenerationRequestError):
+            await service.retry(job.id)
+        assert len(registry.list_jobs()) == 1
+        assert len(registry.list_history()) == int(
+            kind in {"completed", "artifact", "unlinked_artifact"}
+        )
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_preview_preserves_load_failure_and_does_not_unload_unloaded_model(
+    tmp_path: Path,
+) -> None:
     lease = _LoadFailsWithoutModel()
     service, _registry_value, _layout, _events_value = _service(tmp_path, lease)
 
@@ -572,7 +833,9 @@ async def test_preview_preserves_synthesis_failure_when_unload_also_fails(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_preview_preserves_stream_close_failure_when_unload_also_fails(tmp_path: Path) -> None:
+async def test_preview_preserves_stream_close_failure_when_unload_also_fails(
+    tmp_path: Path,
+) -> None:
     lease = _CloseAndUnloadFails()
     service, _registry_value, _layout, _events_value = _service(tmp_path, lease)
 
@@ -598,7 +861,9 @@ async def test_completed_nonretained_job_pcm_subscription_replays_audio(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_nonretained_pcm_replay_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_nonretained_pcm_replay_is_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(service_module, "_EPHEMERAL_REPLAY_MAX_BYTES", 4)
     service, _registry, _layout, _events_store = _service(tmp_path, _Lease(_events_with_chunks(2)))
     queued = await service.create(
@@ -614,7 +879,9 @@ async def test_nonretained_pcm_replay_is_bounded(tmp_path: Path, monkeypatch: py
 
 
 @pytest.mark.asyncio
-async def test_completed_retained_job_pcm_subscription_terminates_without_waiting(tmp_path: Path) -> None:
+async def test_completed_retained_job_pcm_subscription_terminates_without_waiting(
+    tmp_path: Path,
+) -> None:
     service, _registry, _layout, _events_store = _service(tmp_path, _Lease(_events()))
     queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="done")
     completed = await asyncio.wait_for(service.wait(queued.id), timeout=1)
@@ -672,7 +939,9 @@ async def test_stalled_pcm_subscriber_does_not_block_generation_or_next_job(tmp_
 
 
 @pytest.mark.asyncio
-async def test_shutdown_pcm_subscriber_is_removed_without_failing_generation(tmp_path: Path) -> None:
+async def test_shutdown_pcm_subscriber_is_removed_without_failing_generation(
+    tmp_path: Path,
+) -> None:
     if _QUEUE_SHUTDOWN is None:
         pytest.skip("asyncio.QueueShutDown is unavailable")
     service, _registry, _layout, _events_store = _service(tmp_path, _Lease(_events()))
@@ -705,7 +974,9 @@ async def test_full_pcm_subscriber_queue_does_not_block_terminal_cleanup(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_create_drives_durable_state_machine_and_publishes_artifact_events(tmp_path: Path) -> None:
+async def test_create_drives_durable_state_machine_and_publishes_artifact_events(
+    tmp_path: Path,
+) -> None:
     service, registry, layout, events = _service(tmp_path, _Lease(_events()))
 
     queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="hello")
@@ -1024,9 +1295,7 @@ async def test_reference_generation_claims_transcript_builds_oneof_and_cleans_af
     reference_id = _validated_reference(reference_service)
     reference_path = layout.reference_staging / reference_id
 
-    queued = await service.create(
-        model_id="model-one", reference_id=reference_id, text="clone me"
-    )
+    queued = await service.create(model_id="model-one", reference_id=reference_id, text="clone me")
     assert queued.voice_id is None
     assert queued.reference_id == reference_id
     assert reference_path.exists()
@@ -1059,7 +1328,9 @@ async def test_reference_generation_rejects_missing_or_ambiguous_source(tmp_path
     with pytest.raises(GenerationRequestError, match="exactly one"):
         await service.create(model_id="model-one", text="text")
     with pytest.raises(GenerationRequestError, match="exactly one"):
-        await service.create(model_id="model-one", voice_id="fake-neutral", reference_id="ref", text="text")
+        await service.create(
+            model_id="model-one", voice_id="fake-neutral", reference_id="ref", text="text"
+        )
 
 
 @pytest.mark.asyncio
@@ -1135,7 +1406,9 @@ async def test_reference_cleanup_happens_after_malformed_pcm(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_recover_marks_reference_job_recovery_required_when_transcript_is_lost(tmp_path: Path) -> None:
+async def test_recover_marks_reference_job_recovery_required_when_transcript_is_lost(
+    tmp_path: Path,
+) -> None:
     lease = _Lease(_events(), capabilities=_reference_capabilities())
     registry, layout, events = _registry(tmp_path)
     reference_service = _reference_service(layout, registry)
@@ -1169,7 +1442,9 @@ async def test_recover_marks_reference_job_recovery_required_when_transcript_is_
 
 
 @pytest.mark.asyncio
-async def test_close_fails_queued_reference_job_closed_before_redacting_reference_id(tmp_path: Path) -> None:
+async def test_close_fails_queued_reference_job_closed_before_redacting_reference_id(
+    tmp_path: Path,
+) -> None:
     lease = _Lease(_events(), capabilities=_reference_capabilities())
     registry, layout, events = _registry(tmp_path)
     reference_service = _reference_service(layout, registry)
@@ -1195,7 +1470,9 @@ async def test_close_fails_queued_reference_job_closed_before_redacting_referenc
 
 
 @pytest.mark.asyncio
-async def test_close_retains_reference_id_and_records_cleanup_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_close_retains_reference_id_and_records_cleanup_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     lease = _Lease(_events(), capabilities=_reference_capabilities())
     registry, layout, events = _registry(tmp_path)
     reference_service = _reference_service(layout, registry)
@@ -1208,7 +1485,9 @@ async def test_close_retains_reference_id_and_records_cleanup_failure(tmp_path: 
         reference_service=reference_service,
     )
     reference_id = _validated_reference(reference_service)
-    queued = await service.create(model_id="model-one", reference_id=reference_id, text="shutdown cleanup")
+    queued = await service.create(
+        model_id="model-one", reference_id=reference_id, text="shutdown cleanup"
+    )
     monkeypatch.setattr(service, "_release_reference", lambda handle: False)
 
     await service.close()
@@ -1254,7 +1533,9 @@ async def test_close_fails_in_flight_reference_job_without_clearing_reference_id
 
 
 @pytest.mark.asyncio
-async def test_recover_never_reschedules_queued_reference_job_without_reference_service(tmp_path: Path) -> None:
+async def test_recover_never_reschedules_queued_reference_job_without_reference_service(
+    tmp_path: Path,
+) -> None:
     registry, layout, events = _registry(tmp_path)
     job = registry.create_job(
         job_id="queued-reference",
@@ -1307,10 +1588,20 @@ async def test_malformed_pcm_fails_and_removes_private_files(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("order", [
-    [3, 0, 1], [0, 1, 3, 3], [0, 1, 3, 2], [0, 3, 1], [2, 0, 1, 3], [0, 1],
-])
-async def test_synthesis_requires_header_first_and_one_terminal_result(tmp_path: Path, order: list[int]) -> None:
+@pytest.mark.parametrize(
+    "order",
+    [
+        [3, 0, 1],
+        [0, 1, 3, 3],
+        [0, 1, 3, 2],
+        [0, 3, 1],
+        [2, 0, 1, 3],
+        [0, 1],
+    ],
+)
+async def test_synthesis_requires_header_first_and_one_terminal_result(
+    tmp_path: Path, order: list[int]
+) -> None:
     valid = _events()
     service, _, layout, _ = _service(tmp_path, _Lease([valid[index] for index in order]))
     queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="event order")
@@ -1345,7 +1636,9 @@ async def test_persistence_failure_after_publication_removes_artifact_file(
         raise RuntimeError("artifact persistence failed")
 
     monkeypatch.setattr(registry, "create_artifact", fail_create_artifact)
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="persist failure")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="persist failure"
+    )
     failed = await service.wait(queued.id)
 
     assert failed.state is GenerationState.FAILED
@@ -1366,7 +1659,9 @@ async def test_completion_persistence_failure_removes_file_and_artifact_row(
         return original_transition(job_id, state, **kwargs)
 
     monkeypatch.setattr(registry, "transition_job", fail_completion)
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="complete failure")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="complete failure"
+    )
     failed = await service.wait(queued.id)
 
     assert failed.state is GenerationState.FAILED
@@ -1413,11 +1708,15 @@ async def test_cancellation_closes_worker_stream_and_removes_staging(tmp_path: P
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 async def test_cancellation_is_terminal_only_after_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_fails: bool,
 ) -> None:
     lease = _Lease(_events(), block=True)
     service, _, layout, events = _service(tmp_path, lease)
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="cancel cleanup")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="cancel cleanup"
+    )
     while not tuple(layout.staging.iterdir()):
         await asyncio.sleep(0)
     original_unlink = Path.unlink
@@ -1439,7 +1738,9 @@ async def test_cancellation_is_terminal_only_after_cleanup(
         assert terminal.state is GenerationState.FAILED
         assert terminal.error["code"] == "cleanup_failed"
         assert terminal.error["retryable"] is False
-        assert not any(event.event_type == "generation.cancelled" for event in events.read_after(0).events)
+        assert not any(
+            event.event_type == "generation.cancelled" for event in events.read_after(0).events
+        )
         monkeypatch.undo()
         await service.recover()
     else:
@@ -1449,10 +1750,15 @@ async def test_cancellation_is_terminal_only_after_cleanup(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("active_state", [GenerationState.LOADING, GenerationState.GENERATING, GenerationState.FINALIZING])
+@pytest.mark.parametrize(
+    "active_state",
+    [GenerationState.LOADING, GenerationState.GENERATING, GenerationState.FINALIZING],
+)
 @pytest.mark.parametrize("cancel_requested", [False, True])
 async def test_recover_fails_abandoned_active_jobs_and_reschedules_queued_jobs(
-    tmp_path: Path, active_state: GenerationState, cancel_requested: bool,
+    tmp_path: Path,
+    active_state: GenerationState,
+    cancel_requested: bool,
 ) -> None:
     service, registry, layout, _ = _service(tmp_path, _Lease(_events()))
     active = registry.create_job(
@@ -1549,7 +1855,9 @@ async def test_recover_preserves_replacement_without_publication_identity(tmp_pa
 async def test_completed_scheduler_tasks_are_removed_from_tracking(tmp_path: Path) -> None:
     service, _, _, _ = _service(tmp_path, _Lease(_events()))
 
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="bounded task")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="bounded task"
+    )
     assert (await service.wait(queued.id)).state is GenerationState.COMPLETED
     await asyncio.sleep(0)
 
@@ -1651,6 +1959,7 @@ async def test_open_artifact_does_not_normalize_operational_error_to_not_found(
     queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="read error")
     await service.wait(queued.id)
     artifact = service.list_history()[0]
+
     def fail_fdopen(*_args: object, **_kwargs: object):
         raise OSError(service_module.errno.EIO, "managed storage read failed")
 
@@ -1716,12 +2025,15 @@ async def test_delete_artifact_normalizes_unsafe_managed_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service, _, _, _ = _service(tmp_path, _Lease(_events()))
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="unsafe delete")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="unsafe delete"
+    )
     await service.wait(queued.id)
     artifact = service.list_history()[0]
 
     def unsafe(_artifact: object):
         from tts_studio.storage.layout import UnsafeStoragePathError
+
         raise UnsafeStoragePathError("redirected")
 
     monkeypatch.setattr(service, "_artifact_path", unsafe)
@@ -1730,14 +2042,19 @@ async def test_delete_artifact_normalizes_unsafe_managed_path(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("error_number", [service_module.errno.EIO, service_module.errno.EMFILE, service_module.errno.EACCES])
+@pytest.mark.parametrize(
+    "error_number",
+    [service_module.errno.EIO, service_module.errno.EMFILE, service_module.errno.EACCES],
+)
 async def test_delete_artifact_preserves_operational_validation_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     error_number: int,
 ) -> None:
     service, _, _, _ = _service(tmp_path, _Lease(_events()))
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="storage error")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="storage error"
+    )
     await service.wait(queued.id)
     artifact = service.list_history()[0]
 
@@ -1757,7 +2074,9 @@ async def test_delete_artifact_maps_snapshot_read_error_to_deletion_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service, _, _, _ = _service(tmp_path, _Lease(_events()))
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="snapshot error")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="snapshot error"
+    )
     await service.wait(queued.id)
     artifact = service.list_history()[0]
 
@@ -1792,7 +2111,9 @@ async def test_delete_rejects_ancestor_replacement_before_unlink(
     tmp_path: Path,
 ) -> None:
     service, _, layout, _ = _service(tmp_path, _Lease(_events()))
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="ancestor race")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="ancestor race"
+    )
     await service.wait(queued.id)
     artifact = service.list_history()[0]
     path = service.read_artifact(artifact.id)
@@ -1822,7 +2143,9 @@ async def test_identity_bound_unlink_targets_open_directory_when_path_is_replace
     tmp_path: Path,
 ) -> None:
     service, _, layout, _ = _service(tmp_path, _Lease(_events()))
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="directory race")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="directory race"
+    )
     await service.wait(queued.id)
     artifact = service.list_history()[0]
     path = service.read_artifact(artifact.id)
@@ -1978,7 +2301,9 @@ async def test_delete_artifact_does_not_restore_when_registry_reports_row_absent
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service, registry, _, _ = _service(tmp_path, _Lease(_events()))
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="false delete")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="false delete"
+    )
     completed = await service.wait(queued.id)
     artifact = service.list_history()[0]
     path = service.read_artifact(artifact.id)
@@ -2006,7 +2331,9 @@ async def test_restore_artifact_retries_short_writes_and_verifies_payload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service, _, _, _ = _service(tmp_path, _Lease(_events()))
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="short restore")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="short restore"
+    )
     await service.wait(queued.id)
     artifact = service.list_history()[0]
     path = service.read_artifact(artifact.id)
@@ -2030,7 +2357,9 @@ async def test_restore_artifact_removes_partial_file_and_retains_metadata_on_wri
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service, _, _, _ = _service(tmp_path, _Lease(_events()))
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="failed restore")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="failed restore"
+    )
     completed = await service.wait(queued.id)
     artifact = service.list_history()[0]
     path = service.read_artifact(artifact.id)
@@ -2062,7 +2391,9 @@ async def test_restore_artifact_surfaces_post_publication_staging_cleanup_failur
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service, _, _, _ = _service(tmp_path, _Lease(_events()))
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="cleanup restore")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="cleanup restore"
+    )
     await service.wait(queued.id)
     artifact = service.list_history()[0]
     path = service.read_artifact(artifact.id)
@@ -2100,7 +2431,9 @@ async def test_delete_artifact_preserves_db_error_after_successful_restore(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service, registry, _, _ = _service(tmp_path, _Lease(_events()))
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="database failure")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="database failure"
+    )
     completed = await service.wait(queued.id)
     artifact = service.list_history()[0]
     path = service.read_artifact(artifact.id)
@@ -2129,7 +2462,9 @@ async def test_delete_artifact_reports_restore_failure_without_leaving_partial_f
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service, registry, _, _ = _service(tmp_path, _Lease(_events()))
-    queued = await service.create(model_id="model-one", voice_id="fake-neutral", text="restore failure")
+    queued = await service.create(
+        model_id="model-one", voice_id="fake-neutral", text="restore failure"
+    )
     completed = await service.wait(queued.id)
     artifact = service.list_history()[0]
     path = service.read_artifact(artifact.id)

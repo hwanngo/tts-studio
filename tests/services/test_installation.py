@@ -31,7 +31,9 @@ def test_service_paths_require_absolute_home_and_reject_unsafe_names(tmp_path: P
             ServicePaths.resolve(ServicePlatform.LINUX, name, tmp_path)
 
 
-def test_write_definition_creates_parent_and_replaces_regular_file_atomically(tmp_path: Path) -> None:
+def test_write_definition_creates_parent_and_replaces_regular_file_atomically(
+    tmp_path: Path,
+) -> None:
     paths = ServicePaths.resolve(ServicePlatform.LINUX, "tts-studio", tmp_path)
 
     write_definition(paths, "first")

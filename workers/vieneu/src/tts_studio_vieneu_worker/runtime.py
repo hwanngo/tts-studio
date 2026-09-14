@@ -44,7 +44,8 @@ def _sdk_factory(*args: object, **kwargs: object) -> Any:
 
     sdk_engine = onnx_runtime_lite.OnnxV3LiteEngine
 
-    class LocalCodecOnnxEngine(sdk_engine):
+    # The optional SDK supplies this runtime-selected base; no static type exists.
+    class LocalCodecOnnxEngine(sdk_engine):  # type: ignore[valid-type,misc]
         def __init__(self, *engine_args: object, **engine_kwargs: object) -> None:
             engine_kwargs["codec_dir"] = codec_dir
             super().__init__(*engine_args, **engine_kwargs)
@@ -69,19 +70,24 @@ def _sdk_reference_signature_supported() -> bool:
 
 
 def _supports_reference_signature(target: object, *, allow_verified_kwargs: bool = False) -> bool:
+    if not callable(target):
+        return False
     try:
         signature = inspect.signature(target)
         parameter_names = set(signature.parameters)
         if not {"ref_audio", "ref_text"}.issubset(parameter_names) and not (
             allow_verified_kwargs
-            and any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+            and any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in signature.parameters.values()
+            )
         ):
             return False
         try:
             signature.bind("text", ref_audio="reference.wav", ref_text="transcript")
         except TypeError:
             signature.bind(None, "text", ref_audio="reference.wav", ref_text="transcript")
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
     return True
 
@@ -125,7 +131,9 @@ class VieNeuRuntime:
         except ValueError as error:
             raise RuntimeFailure("invalid_request", "The model cache path is invalid") from error
         except OSError as error:
-            raise RuntimeFailure("model_load_failed", "The VieNeu model files are unavailable") from error
+            raise RuntimeFailure(
+                "model_load_failed", "The VieNeu model files are unavailable"
+            ) from error
         try:
             engine = self._vieneu_factory(
                 mode="v3turbo",
@@ -137,7 +145,9 @@ class VieNeuRuntime:
                 threads=0,
             )
         except Exception as error:
-            raise RuntimeFailure("model_load_failed", "The VieNeu model could not be loaded") from error
+            raise RuntimeFailure(
+                "model_load_failed", "The VieNeu model could not be loaded"
+            ) from error
         if engine is None:
             raise RuntimeFailure("model_load_failed", "The VieNeu model could not be loaded")
         self._engine = engine
@@ -147,7 +157,8 @@ class VieNeuRuntime:
         self._require_model(model_id)
         if self._synthesis_stuck:
             raise RuntimeFailure(
-                "model_unload_failed", "The VieNeu model cannot be released while synthesis is stuck"
+                "model_unload_failed",
+                "The VieNeu model cannot be released while synthesis is stuck",
             )
         # Unload must not race native inference.  Synthesis owns this lock for
         # the lifetime of its producer, so a direct lifecycle call waits until
@@ -164,7 +175,9 @@ class VieNeuRuntime:
                     raise TypeError("no verified SDK cleanup API")
                 cleanup()
             except Exception as error:
-                raise RuntimeFailure("model_unload_failed", "The VieNeu model could not be released") from error
+                raise RuntimeFailure(
+                    "model_unload_failed", "The VieNeu model could not be released"
+                ) from error
             self._engine = None
             self._model_id = None
         finally:
@@ -173,18 +186,22 @@ class VieNeuRuntime:
     def list_voices(self, model_id: str) -> tuple[engine_pb2.PresetVoice, ...]:
         engine = self.engine_for(model_id)
         try:
-            entries: Iterator[object] = iter(engine.list_preset_voices())
+            entries: Iterator[tuple[object, object]] = iter(engine.list_preset_voices())
             voices = []
             for entry in entries:
-                label, voice_id = entry  # type: ignore[misc]
+                label, voice_id = entry
                 voices.append(
-                    engine_pb2.PresetVoice(id=str(voice_id), label=str(label), capabilities=["preset"])
+                    engine_pb2.PresetVoice(
+                        id=str(voice_id), label=str(label), capabilities=["preset"]
+                    )
                 )
             return tuple(voices)
         except Exception as error:
             if isinstance(error, RuntimeFailure):
                 raise
-            raise RuntimeFailure("voice_list_failed", "VieNeu preset voices could not be listed") from error
+            raise RuntimeFailure(
+                "voice_list_failed", "VieNeu preset voices could not be listed"
+            ) from error
 
     def engine_for(self, model_id: str) -> Any:
         self._require_model(model_id)
@@ -234,7 +251,9 @@ class VieNeuRuntime:
     ) -> Iterator[bytes]:
         """Yield validated PCM chunks while serializing access to the loaded SDK."""
         if self._synthesis_stuck:
-            raise RuntimeFailure("synthesis_busy", "The VieNeu runtime is quarantined after stuck synthesis")
+            raise RuntimeFailure(
+                "synthesis_busy", "The VieNeu runtime is quarantined after stuck synthesis"
+            )
         if not self._synthesis_lock.acquire(blocking=False):
             raise RuntimeFailure("synthesis_busy", "The VieNeu runtime is already synthesizing")
         try:
@@ -243,20 +262,31 @@ class VieNeuRuntime:
             if reference:
                 try:
                     if not self.reference_cloning_supported():
-                        raise RuntimeFailure("reference_unsupported", "Reference cloning is unavailable")
+                        raise RuntimeFailure(
+                            "reference_unsupported", "Reference cloning is unavailable"
+                        )
                 except ReferenceValidationError as error:
                     raise RuntimeFailure(error.code, error.message) from error
             else:
                 self.validate_voice(model_id, voice_id or "")
             try:
                 if reference:
-                    with self._reference_validator.open_reference(reference_path or "") as descriptor:
+                    with self._reference_validator.open_reference(
+                        reference_path or ""
+                    ) as descriptor:
                         self._reference_validator.validate_descriptor(
                             descriptor, reference_path or "", transcript
                         )
-                        with tempfile.TemporaryDirectory(prefix="tts-studio-reference-") as directory:
-                            snapshot = Path(directory) / ("reference" + Path(reference_path or "").suffix.lower())
-                            with os.fdopen(os.dup(descriptor), "rb") as source, snapshot.open("wb") as destination:
+                        with tempfile.TemporaryDirectory(
+                            prefix="tts-studio-reference-"
+                        ) as directory:
+                            snapshot = Path(directory) / (
+                                "reference" + Path(reference_path or "").suffix.lower()
+                            )
+                            with (
+                                os.fdopen(os.dup(descriptor), "rb") as source,
+                                snapshot.open("wb") as destination,
+                            ):
                                 shutil.copyfileobj(source, destination)
                                 destination.flush()
                                 os.fsync(destination.fileno())
@@ -269,7 +299,9 @@ class VieNeuRuntime:
                                 try:
                                     pcm = waveform_to_pcm16(samples)
                                 except (TypeError, ValueError, OverflowError) as error:
-                                    raise RuntimeFailure("invalid_audio", "VieNeu returned invalid audio") from error
+                                    raise RuntimeFailure(
+                                        "invalid_audio", "VieNeu returned invalid audio"
+                                    ) from error
                                 if pcm:
                                     yield pcm
                 else:
@@ -280,7 +312,9 @@ class VieNeuRuntime:
                         try:
                             pcm = waveform_to_pcm16(samples)
                         except (TypeError, ValueError, OverflowError) as error:
-                            raise RuntimeFailure("invalid_audio", "VieNeu returned invalid audio") from error
+                            raise RuntimeFailure(
+                                "invalid_audio", "VieNeu returned invalid audio"
+                            ) from error
                         if pcm:
                             yield pcm
             except RuntimeFailure:

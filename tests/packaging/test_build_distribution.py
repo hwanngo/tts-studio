@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import ModuleType
@@ -99,11 +100,10 @@ def test_build_emits_the_protocol_wheel_with_the_root_release_artifacts(
 
     monkeypatch.setattr(distribution_builder.subprocess, "run", record_command)
 
-    distribution_builder.build_distribution(
-        repository, output_dir, include_test_adapters=True
-    )
+    distribution_builder.build_distribution(repository, output_dir, include_test_adapters=True)
 
     assert commands == [
+        [sys.executable, str(repository / "scripts" / "sync_release_versions.py"), "--check"],
         ["pnpm", "--dir", "web", "build"],
         [
             "uv",

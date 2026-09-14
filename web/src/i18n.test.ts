@@ -12,4 +12,11 @@ describe("i18n bootstrap", () => {
     expect(i18n.hasResourceBundle("en-US", "main")).toBe(true);
     expect(i18n.hasResourceBundle("vi-VN", "main")).toBe(true);
   });
+
+  it("updates the document language at initialization and when the locale changes", async () => {
+    await i18n.changeLanguage("vi-VN");
+    expect(document.documentElement.lang).toBe("vi-VN");
+    await i18n.changeLanguage("en-US");
+    expect(document.documentElement.lang).toBe("en-US");
+  });
 });

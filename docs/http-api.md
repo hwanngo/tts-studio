@@ -19,6 +19,13 @@ The `/api/v1` namespace covers the implemented foundation and evolves through co
 
 `POST /api/v1/generations` supports asynchronous tracked work and interactive streaming. `GET /api/v1/events` uses SSE with event IDs so clients can resume after reconnecting. Audio is delivered as a binary stream or managed file.
 
+Native generation text and OpenAI-compatible `input` are limited to 10,000 characters,
+enforced before job persistence and at the shared Core service boundary. Both generation creation
+routes reject JSON bodies larger than 128 KiB with `413 request_body_too_large`, including chunked
+requests, before JSON parsing. This byte budget accommodates 10,000 JSON-escaped Unicode characters.
+For jobs with retention disabled, terminal responses preserve the `text` field as an empty string;
+the terminal state and text redaction are committed in the same SQLite transaction.
+
 Alignment is an opt-in post-synthesis operation for completed generations that retained a WAV
 Audio Artifact. `POST /api/v1/generations/{job_id}/alignment` queues one alignment Job and is
 idempotent; `GET /api/v1/generations/{job_id}/alignment` returns `queued`, `running`, `completed`,
@@ -70,11 +77,24 @@ attempts and capped exponential backoff; exhausted replicas remain unhealthy unt
 lifecycle action. `GET /api/v1/service` reports lifecycle status. Install, uninstall, and restart
 use explicit confirmation-bearing `POST` routes and return an operation result; unsupported
 lifecycle operations return `service_unsupported`.
-`PATCH /api/v1/models/{model_id}/replicas` changes the desired Worker replica count from 1 to 8.
+`PATCH /api/v1/models/{model_id}/replicas` changes the desired Worker Replica count from 1 to 8.
+Each healthy Replica admits one active generation; excess work waits for supervisor capacity.
 `GET /api/v1/generations/{job_id}/pcm` streams transient validated mono S16LE PCM with explicit
-sample-rate, channel-count, and encoding headers; PCM is never durable. Generation Jobs currently
-have no native retry operation, so failed and cancelled job records are never marked retryable;
-clients must create a new job explicitly, and consumed Reference Recordings are not reusable.
+sample-rate, channel-count, and encoding headers; PCM is never durable.
+
+`POST /api/v1/generations/{job_id}/retry` returns `202` with a new Generation Job for a retained,
+failed attempt whose error is retryable and whose preset or Saved Voice source is still usable.
+The new attempt preserves text, model, voice, retention, and synthesis options, and revalidates
+current model, voice, and Worker capabilities. Repeated or concurrent calls for the same original
+job return its one durable successor, including after Core restart. The original job stays failed;
+to retry a failed successor, call the endpoint with that successor's ID. Retry never happens
+automatically, including when an earlier attempt already streamed partial audio.
+
+Unknown jobs return `404`; non-retryable failures, completed, cancelled, and active jobs return
+`409 generation_not_retryable`. Jobs with redacted text, a one-off Reference Recording, an owned
+Audio Artifact, or incomplete cleanup also return `409`. Consumed references cannot be reused;
+submit a new generation with a new upload. A startup cleanup error's retryable flag refers to
+recovery cleanup after repair and restart, not permission to bypass cleanup through this endpoint.
 
 `POST /api/v1/voices/preview` accepts `{ "model_id": "...", "voice_id": "...", "text": "..." }`
 and returns a directly playable validated WAV (`audio/wav`). Preview text is non-empty, NUL-free,
@@ -89,10 +109,19 @@ values in the ranges speed `0.25..4.0`, pitch `-1.0..1.0`, and volume `0.0..2.0`
 requested option against the selected Worker's runtime capability facts before queueing and again
 after model load. An explicitly requested unsupported option fails with retryable
 `capability_unsupported` when request admission fails before a Generation Job is created; if a
-queued job later fails capability checks, its stored terminal error is non-retryable because no
-Generation retry operation exists. Inline cues remain part of the
+queued job later fails capability checks, its stored terminal error remains non-retryable;
+create a new request after choosing supported options. Inline cues remain part of the
 text payload rather than a separate request field: clients may display guidance only when the
 Worker advertises the runtime `inline_cues` capability, and must not assume cue support.
+
+The Web UI consumes these runtime facts from `GET /api/v1/runtime`: it enables generation only
+when the selected source can stream (and a preset source also has `preset_voices`), exposes
+prosody and cue guidance only for their advertised capabilities, enables cancellation only with
+`synthesis_cancellation`, and enables preset preview only with both `streaming_synthesis` and
+`preset_voices`. Unavailable controls remain visibly disabled with localized reasons; the browser
+does not infer a capability from an installed model or Voice catalog entry. A failed or transient
+runtime probe is treated as unknown, shown as a checking state, and retried rather than interpreted
+as an advertised absence of every capability.
 
 The one-off Reference Recording seam is `POST /api/v1/references` (multipart `model_id`, one
 `file`, and optional `transcript`), `DELETE /api/v1/references/{reference_id}`, and
@@ -220,9 +249,25 @@ live PCM, or a client-to-Worker connection. Stable VieNeu errors include `model_
 
 ## Network security
 
-The default listener accepts loopback IP literals only and defaults to `127.0.0.1` without auth.
+The default listener accepts loopback IP literals only and defaults to `127.0.0.1:7860` without
+authentication. Every request must carry the configured listener authority in `Host`; an exact
+listener accepts only that authority, while `0.0.0.0` or `::` accepts a numeric address of the same
+IP family on the configured port. DNS names and wrong ports are rejected with `400
+host_not_allowed`. This prevents a DNS-rebinding name from becoming same-origin with the Core.
+
+Browser mutations (`POST`, `PUT`, `PATCH`, and `DELETE`) that include `Origin` must match the exact
+`http` origin formed from the accepted request authority. A mismatch returns `403
+origin_not_allowed`. CLI and native clients remain supported because requests without `Origin` are
+accepted. CORS remains closed by default.
+
 Non-loopback serving requires `TTS_STUDIO_API_TOKEN_ENV` to name a populated environment variable.
 When configured, the Core requires `Authorization: Bearer <token>` on every `/api/*` and `/v1/*`
 request and returns the stable `authentication_failed` envelope for missing or invalid credentials.
-The CLI forwards the same token automatically. CORS is closed by default. Secrets and
-authorization headers are redacted from logs and never returned through settings endpoints.
+The CLI forwards the same token automatically. Static Web assets remain readable so the Web UI can
+bootstrap. On its first `401`, the Web UI asks for the bearer token and keeps it only in the current
+JavaScript runtime; it never writes token values to browser storage or URLs. The session attaches the
+header to JSON operations, PCM and event streams, media reads, and downloads. Protected audio is
+fetched into revocable object URLs for playback and download, and authenticated events use a
+streaming fetch instead of native `EventSource`. Any current-session authentication failure clears
+the in-memory token and reopens the prompt. Secrets and authorization headers are redacted from logs
+and never returned through settings endpoints.

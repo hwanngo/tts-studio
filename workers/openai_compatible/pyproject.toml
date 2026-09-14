@@ -8,8 +8,8 @@ version = "0.1.0"
 description = "Isolated OpenAI-compatible remote speech Worker for TTS Studio"
 requires-python = ">=3.14"
 dependencies = [
-    "tts-studio-protocol",
-    "tts-studio-worker-sdk",
+    "tts-studio-protocol==0.1.0",
+    "tts-studio-worker-sdk==0.1.0",
 ]
 
 [project.scripts]
@@ -21,3 +21,12 @@ tts-studio-worker-sdk = { path = "../../packages/worker-sdk", editable = true }
 
 [tool.uv.build-backend]
 module-name = "tts_studio_openai_worker"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]

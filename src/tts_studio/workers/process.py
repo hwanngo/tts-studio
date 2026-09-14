@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from asyncio import Task
 from asyncio.subprocess import Process
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,3 +63,7 @@ class WorkerProcess:
     loaded_model_id: str | None = None
     replica_id: int = 0
     owner_file: Path | None = None
+    quarantined: bool = False
+    terminated: bool = False
+    termination_task: Task[None] | None = field(default=None, repr=False, compare=False)
+    hard_stop_task: Task[None] | None = field(default=None, repr=False, compare=False)

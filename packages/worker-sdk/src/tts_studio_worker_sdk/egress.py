@@ -57,7 +57,10 @@ def resolve_provider_addresses(url: str, *, resolve_dns: bool = True) -> tuple[s
             raise ProviderEgressError("HTTP provider targets must be loopback")
         try:
             addresses = tuple(
-                {ip_address(info[4][0]) for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)}
+                {
+                    ip_address(info[4][0])
+                    for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+                }
             )
         except OSError as error:
             if not resolve_dns:

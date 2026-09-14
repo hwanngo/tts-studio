@@ -1,9 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import i18n from "../../i18n";
+import { clearBrowserApiToken, setBrowserApiToken } from "../../lib/api";
 import { HistoryPage } from "./HistoryPage";
 
+afterEach(() => clearBrowserApiToken());
 
 test("renders a clear empty history state", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("[]", { status: 200 })));
@@ -20,6 +22,42 @@ test("renders retained audio with WAV playback and delete control", async () => 
   expect(await screen.findByLabelText("Audio artifact artifact-one")).toHaveAttribute("src", "/api/v1/artifacts/artifact-one/audio");
   expect(screen.getByRole("link", { name: "Download WAV" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Delete retained audio" })).toBeVisible();
+});
+
+test("fetches protected History audio into a revocable authenticated object URL", async () => {
+  const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    if (String(input) === "/api/v1/history") {
+      return Promise.resolve(new Response(JSON.stringify([artifacts[0]]), { status: 200 }));
+    }
+    return Promise.resolve(new Response(new Uint8Array([82, 73, 70, 70]), {
+      status: 200,
+      headers: { "Content-Type": "audio/wav" },
+    }));
+  });
+  const createObjectURL = vi.fn(() => "blob:history-audio");
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+  setBrowserApiToken("session-secret");
+
+  const view = render(<HistoryPage />);
+
+  expect(await screen.findByLabelText("Audio artifact artifact-one")).toHaveAttribute(
+    "src",
+    "blob:history-audio",
+  );
+  expect(screen.getByRole("link", { name: "Download WAV" })).toHaveAttribute(
+    "href",
+    "blob:history-audio",
+  );
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/v1/artifacts/artifact-one/audio",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer session-secret" }),
+    }),
+  );
+  view.unmount();
+  expect(revokeObjectURL).toHaveBeenCalledWith("blob:history-audio");
 });
 
 test("announces history unavailable", async () => {

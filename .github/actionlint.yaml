@@ -1,0 +1,4 @@
+# The hardware gate's exact custom label is part of its admission control.
+self-hosted-runner:
+  labels:
+    - tts-studio-vieneu-hardware

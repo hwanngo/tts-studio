@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import i18n from "../../i18n";
 import type {
@@ -8,11 +8,14 @@ import type {
   ModelInstallationResponse,
   VoiceResponse,
 } from "../../generated/api";
+import { clearBrowserApiToken, setBrowserApiToken } from "../../lib/api";
 import { StudioPage } from "./StudioPage";
 
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
 });
+
+afterEach(() => clearBrowserApiToken());
 
 const systemStatus = {
   version: "0.1.0",
@@ -102,7 +105,7 @@ function installApi(options: {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url === "/api/v1/models") return json([model]);
-    if (url === "/api/v1/runtime") return json({ workers: [{ engine_id: "fake", capabilities: options.runtimeCapabilities ?? null }], version: "0.1.0", host: "127.0.0.1", port: 7860, data_dir: "/workspace/.tts-studio", generation_status: "idle", active_generations: {}, storage_accessible: true, database_accessible: true });
+    if (url === "/api/v1/runtime") return json({ workers: [{ engine_id: "fake", capabilities: options.runtimeCapabilities ?? ["streaming_synthesis", "preset_voices", "synthesis_cancellation"] }], version: "0.1.0", host: "127.0.0.1", port: 7860, data_dir: "/workspace/.tts-studio", generation_status: "idle", active_generations: {}, storage_accessible: true, database_accessible: true });
     if (url === "/api/v1/settings") return options.settingsResponse ?? json({
       retain_audio_by_default: options.retainByDefault ?? true,
       artifact_max_age_days: null,
@@ -124,6 +127,12 @@ function installApi(options: {
     }
     if (url.endsWith("/pcm")) {
       return pcmResponses.shift() ?? options.pcmResponse ?? new Response(new Uint8Array([0, 1, 2, 3]), { status: 200 });
+    }
+    if (url.includes("/artifacts/") && url.endsWith("/audio")) {
+      return new Response(new Uint8Array([82, 73, 70, 70]), {
+        status: 200,
+        headers: { "Content-Type": "audio/wav" },
+      });
     }
     throw new Error(`Unexpected request: ${method} ${url}`);
   });
@@ -188,7 +197,11 @@ test("submits generation, shows live PCM progress, and cancels", async () => {
 
 test("renders finalized WAV playback and download only after completion", async () => {
   const user = userEvent.setup();
-  installApi({
+  const createObjectURL = vi.fn(() => "blob:retained-generation");
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+  setBrowserApiToken("session-secret");
+  const mock = installApi({
     createdJob: job({
       state: "completed",
       artifact_id: "artifact-one",
@@ -198,18 +211,26 @@ test("renders finalized WAV playback and download only after completion", async 
       frame_count: 24000,
     }),
   });
-  render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
+  const view = render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
 
   await user.type(await screen.findByLabelText("Text"), "Finished speech.");
   await user.click(screen.getByRole("button", { name: "Generate speech" }));
 
   const player = await screen.findByLabelText("Finalized speech audio");
-  expect(player).toHaveAttribute("src", "/api/v1/artifacts/artifact-one/audio");
+  expect(player).toHaveAttribute("src", "blob:retained-generation");
   expect(player).toHaveAttribute("preload", "metadata");
   expect(screen.getByRole("link", { name: "Download WAV" })).toHaveAttribute(
     "href",
-    "/api/v1/artifacts/artifact-one/audio",
+    "blob:retained-generation",
   );
+  expect(mock).toHaveBeenCalledWith(
+    "/api/v1/artifacts/artifact-one/audio",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer session-secret" }),
+    }),
+  );
+  view.unmount();
+  expect(revokeObjectURL).toHaveBeenCalledWith("blob:retained-generation");
 });
 
 test("restores the newest generation so retained audio remains replayable", async () => {
@@ -365,7 +386,7 @@ test("keeps status text available without relying on color", async () => {
 
 test("renders supported prosody controls as sliders and serializes changed values", async () => {
   const user = userEvent.setup();
-  const mock = installApi({ runtimeCapabilities: ["speed", "pitch", "volume", "inline_cues"] });
+ const mock = installApi({ runtimeCapabilities: ["streaming_synthesis", "preset_voices", "synthesis_cancellation", "speed", "pitch", "volume", "inline_cues"] });
   render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
 
   const speed = await screen.findByRole("slider", { name: "Speed" });
@@ -523,12 +544,17 @@ test("invalidates voices during model discovery and ignores obsolete responses",
     const url = String(input);
     if (url === "/api/v1/models") return Promise.resolve(json([model, { ...model, id: "model-two" }]));
     if (url === "/api/v1/generations") return Promise.resolve(json([]));
+    if (url === "/api/v1/runtime") return Promise.resolve(json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis", "preset_voices"] }] }));
+    if (url === "/api/v1/settings") return Promise.resolve(json({ retain_audio_by_default: true }));
     return new Promise<Response>((resolve) => { pending.set(url, [...(pending.get(url) ?? []), resolve]); });
   }));
   render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
   const first = "/api/v1/voices?model_id=model-one";
   const second = "/api/v1/voices?model_id=model-two";
+  const firstSaved = "/api/v1/saved-voices?model_id=model-one";
+  const secondSaved = "/api/v1/saved-voices?model_id=model-two";
   await waitFor(() => expect(pending.has(first)).toBe(true));
+  await act(async () => { pending.get(firstSaved)![0](json([])); });
   await act(async () => { pending.get(first)![0](json(voices)); });
   expect(screen.getByRole("button", { name: "Generate speech" })).toBeEnabled();
   await chooseModel(user, "fixtures/compatible · INT8", 1);
@@ -537,8 +563,142 @@ test("invalidates voices during model discovery and ignores obsolete responses",
   expect(screen.getByRole("button", { name: "Generate speech" })).toBeDisabled();
   await chooseModel(user, "fixtures/compatible · INT8", 0);
   await act(async () => { pending.get(second)![0](json([{ id: "stale", label: "Stale voice", capabilities: [] }])); });
+  await act(async () => { pending.get(secondSaved)![0](json([])); });
   expect(screen.queryByRole("option", { name: "Stale voice" })).not.toBeInTheDocument();
   await act(async () => { pending.get(first)![1](json({ error: { message: "Discovery failed" } }, 503)); });
+  await act(async () => { pending.get(firstSaved)![1](json([])); });
   expect(screen.getByLabelText("Runtime voice")).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Generate speech" })).toBeDisabled();
+});
+
+test.each(["saved-first", "preset-first"])("merges saved and preset voices when %s response resolves first", async (order) => {
+  const user = userEvent.setup();
+  const pending = new Map<string, (response: Response) => void>();
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/v1/models") return Promise.resolve(json([model]));
+    if (url === "/api/v1/generations") return Promise.resolve(json([]));
+    if (url === "/api/v1/runtime") return Promise.resolve(json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis", "preset_voices"] }] }));
+    if (url === "/api/v1/settings") return Promise.resolve(json({ retain_audio_by_default: true }));
+    if (url === "/api/v1/voices?model_id=model-one" || url === "/api/v1/saved-voices?model_id=model-one") {
+      return new Promise<Response>((resolve) => pending.set(url, resolve));
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+  render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
+  await waitFor(() => expect(pending.size).toBe(2));
+  const preset = "/api/v1/voices?model_id=model-one";
+  const saved = "/api/v1/saved-voices?model_id=model-one";
+  const first = order === "saved-first" ? saved : preset;
+  const second = order === "saved-first" ? preset : saved;
+  await act(async () => { pending.get(first)!(json(first === saved ? [{ id: "saved-one", label: "Saved one" }] : voices)); });
+  await act(async () => { pending.get(second)!(json(second === saved ? [{ id: "saved-one", label: "Saved one" }] : voices)); });
+
+  const voiceInput = await screen.findByRole("combobox", { name: "Runtime voice" });
+  expect(voiceInput).toHaveValue("Neutral");
+  await user.click(within(voiceInput.parentElement!).getByRole("button", { name: "Open options" }));
+  expect(screen.getByRole("option", { name: "Saved one (Saved)" })).toBeVisible();
+  expect(screen.getByRole("option", { name: "Neutral" })).toBeVisible();
+});
+
+test("selects a saved voice when the model reports no preset voices", async () => {
+  const user = userEvent.setup();
+  const mock = installApi();
+  mock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "/api/v1/models") return json([model]);
+    if (url === "/api/v1/generations" && (init?.method ?? "GET") === "GET") return json([]);
+    if (url === "/api/v1/runtime") return json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis"] }] });
+    if (url === "/api/v1/settings") return json({ retain_audio_by_default: true });
+    if (url === "/api/v1/voices?model_id=model-one") return json([]);
+    if (url === "/api/v1/saved-voices?model_id=model-one") return json([{ id: "saved-only", label: "Saved only" }]);
+    if (url === "/api/v1/generations" && init?.method === "POST") return json(job({ saved_voice_id: "saved-only" }), 202);
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
+
+  const voiceInput = await screen.findByRole("combobox", { name: "Runtime voice" });
+  await waitFor(() => expect(voiceInput).toHaveValue("Saved only (Saved)"));
+  expect(voiceInput).toHaveAccessibleName("Runtime voice");
+  await user.type(screen.getByLabelText("Text"), "Saved voice speech.");
+  const generate = screen.getByRole("button", { name: "Generate speech" });
+  expect(generate).toBeEnabled();
+  expect(generate).not.toHaveAttribute("aria-describedby");
+  await user.click(generate);
+  await waitFor(() => expect(mock).toHaveBeenCalledWith("/api/v1/generations", expect.objectContaining({ body: expect.stringContaining('"saved_voice_id":"saved-only"') })));
+  expect(await screen.findByText("Generation queued")).toBeVisible();
+});
+
+test("gates generation, cancellation, cues, and prosody from Worker capabilities", async () => {
+  const mock = installApi({
+    runtimeCapabilities: [],
+    generationResponses: [json([job({ state: "generating" })])],
+  });
+  render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
+
+  expect(await screen.findByText("Generation is unavailable: selected Worker does not support streaming synthesis.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Generate speech" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancel generation" })).toBeDisabled();
+  expect(screen.getByText("Cancellation is unavailable: selected Worker does not support cancellation.")).toBeVisible();
+  expect(document.getElementById("speech-text-hint")).toHaveTextContent("Inline delivery cues are unavailable for the selected Worker.");
+  expect(screen.getByRole("slider", { name: "Speed" })).toBeDisabled();
+  expect(mock.mock.calls.some(([url, init]) => url === "/api/v1/generations" && init?.method === "POST")).toBe(false);
+});
+
+test("recovers Studio generation and cancellation gates after a transient runtime probe", async () => {
+  let runtimeCalls = 0;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "/api/v1/models") return Promise.resolve(json([model]));
+    if (url === "/api/v1/generations" && (init?.method ?? "GET") === "GET") return Promise.resolve(json([job({ state: "generating" })]));
+    if (url === "/api/v1/runtime") {
+      runtimeCalls += 1;
+      return Promise.resolve(runtimeCalls === 1
+        ? json({ error: { code: "request_failed" } }, 503)
+        : json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis", "preset_voices", "synthesis_cancellation"] }] }));
+    }
+    if (url === "/api/v1/settings") return Promise.resolve(json({ retain_audio_by_default: true }));
+    if (url === "/api/v1/voices?model_id=model-one") return Promise.resolve(json(voices));
+    if (url === "/api/v1/saved-voices?model_id=model-one") return Promise.resolve(json([]));
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+  render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
+
+  const generate = await screen.findByRole("button", { name: "Generate speech" });
+  const cancel = await screen.findByRole("button", { name: "Cancel generation" });
+  await waitFor(() => {
+    expect(generate).toBeEnabled();
+    expect(cancel).toBeEnabled();
+  });
+  expect(runtimeCalls).toBeGreaterThanOrEqual(2);
+});
+
+test("preserves a valid selected non-first voice across a catalog refresh", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/v1/models") return Promise.resolve(json([model, { ...model, id: "model-two" }]));
+    if (url === "/api/v1/generations") return Promise.resolve(json([]));
+    if (url === "/api/v1/runtime") return Promise.resolve(json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis", "preset_voices"] }] }));
+    if (url === "/api/v1/settings") return Promise.resolve(json({ retain_audio_by_default: true }));
+    if (url === "/api/v1/voices?model_id=model-one" || url === "/api/v1/voices?model_id=model-two") return Promise.resolve(json(voices));
+    if (url === "/api/v1/saved-voices?model_id=model-one" || url === "/api/v1/saved-voices?model_id=model-two") return Promise.resolve(json([]));
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+  render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
+
+  const voiceInput = await screen.findByRole("combobox", { name: "Runtime voice" });
+  await user.click(within(voiceInput.parentElement!).getByRole("button", { name: "Open options" }));
+  await user.click(screen.getByRole("option", { name: "Warm" }));
+  expect(voiceInput).toHaveValue("Warm");
+  await chooseModel(user, "fixtures/compatible · INT8", 1);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Runtime voice" })).toHaveValue("Warm"));
+});
+
+test("names preset voice capability as the exact generation blocker", async () => {
+  installApi({ runtimeCapabilities: ["streaming_synthesis"] });
+  render(<MemoryRouter><StudioPage systemStatus={{ state: "ready", value: systemStatus }} /></MemoryRouter>);
+
+  expect(await screen.findByText("Generation is unavailable: selected Worker does not support preset voices.")).toBeVisible();
   expect(screen.getByRole("button", { name: "Generate speech" })).toBeDisabled();
 });

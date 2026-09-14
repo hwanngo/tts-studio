@@ -83,9 +83,7 @@ def test_download_event_payloads_are_mutually_exclusive() -> None:
             resolved_commit="b" * 40,
             variant="int8",
             files=[
-                engine_pb2.ManifestFile(
-                    relative_path="model.onnx", byte_size=1024, sha256="c" * 64
-                )
+                engine_pb2.ManifestFile(relative_path="model.onnx", byte_size=1024, sha256="c" * 64)
             ],
             byte_size=1024,
         )

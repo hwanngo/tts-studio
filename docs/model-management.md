@@ -98,7 +98,7 @@ implication and current observed runtime variant.
 
 ## Artifact verification
 
-The Task 10 artifact smoke explicitly builds the root, protocol, Worker SDK, fake-adapter, and
+The artifact smoke explicitly builds the root, protocol, Worker SDK, fake-adapter, and
 VieNeu Worker wheels for test isolation, installs Core and the fake Worker into separate temporary
 environments, and confirms that Core imports the generated client without importing Worker packages.
 The fake adapter is a deterministic test fixture, not a production-discovered engine. Installed

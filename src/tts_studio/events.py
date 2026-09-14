@@ -138,10 +138,19 @@ class EventStore:
             raise UnsafeEventPayloadError(
                 "generation events require an explicit generation stream identity"
             )
-        if not is_generation_event and stream_kind is None and inferred_kind is not None and isinstance(payload_job_id, str):
+        if (
+            not is_generation_event
+            and stream_kind is None
+            and inferred_kind is not None
+            and isinstance(payload_job_id, str)
+        ):
             stream_kind = inferred_kind
             stream_id = payload_job_id
-        if isinstance(payload_job_id, str) and stream_id is not None and stream_id != payload_job_id:
+        if (
+            isinstance(payload_job_id, str)
+            and stream_id is not None
+            and stream_id != payload_job_id
+        ):
             raise UnsafeEventPayloadError("stream_id does not match payload job_id")
         safe_kind = _safe_stream_kind(stream_kind)
         safe_stream_id = _safe_identifier(stream_id, "stream_id")
@@ -353,8 +362,11 @@ def _safe_event_type(value: str) -> str:
 def _safe_identifier(value: str | None, field: str) -> str | None:
     if value is None:
         return None
-    if not isinstance(value, str) or not value or len(value) > 128 or any(
-        character in value for character in "\r\n\0"
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > 128
+        or any(character in value for character in "\r\n\0")
     ):
         raise UnsafeEventPayloadError(f"{field} is invalid")
     if _unsafe_text(value):

@@ -64,10 +64,14 @@ class WavArtifactWriter:
             self._stream.seek(0)
             self._layout.checked_directory("audio")
             if self._destination.is_symlink():
-                raise UnsafeStoragePathError("managed artifact destination must not be a symbolic link")
+                raise UnsafeStoragePathError(
+                    "managed artifact destination must not be a symbolic link"
+                )
 
             descriptor, final_path = tempfile.mkstemp(
-                prefix=f".{self._destination.stem}.", suffix=".wav", dir=self._layout.checked_directory("audio")
+                prefix=f".{self._destination.stem}.",
+                suffix=".wav",
+                dir=self._layout.checked_directory("audio"),
             )
             self._final_temporary_path = Path(final_path)
             with os.fdopen(descriptor, "w+b", buffering=0) as final_stream:
@@ -87,17 +91,30 @@ class WavArtifactWriter:
                     raise ValueError("staged PCM differs from validated audio")
                 final_stream.seek(0)
                 expected_header = struct.pack(
-                    "<4sI4s4sIHHIIHH4sI", b"RIFF", 36 + self._byte_count,
-                    b"WAVE", b"fmt ", 16, 1, 1, 48_000, 96_000, 2, 16,
-                    b"data", self._byte_count,
+                    "<4sI4s4sIHHIIHH4sI",
+                    b"RIFF",
+                    36 + self._byte_count,
+                    b"WAVE",
+                    b"fmt ",
+                    16,
+                    1,
+                    1,
+                    48_000,
+                    96_000,
+                    2,
+                    16,
+                    b"data",
+                    self._byte_count,
                 )
                 if final_stream.read(44) != expected_header:
                     raise ValueError("WAV header does not match validated PCM totals")
                 wav_digest = hashlib.sha256()
                 while chunk := final_stream.read(1024 * 1024):
                     wav_digest.update(chunk)
-                if (os.fstat(final_stream.fileno()).st_size != 44 + self._byte_count
-                        or wav_digest.digest() != self._pcm_digest.digest()):
+                if (
+                    os.fstat(final_stream.fileno()).st_size != 44 + self._byte_count
+                    or wav_digest.digest() != self._pcm_digest.digest()
+                ):
                     raise ValueError("WAV payload does not match validated PCM")
                 os.fsync(final_stream.fileno())
                 _require_identity(self._final_temporary_path, identity)
@@ -172,7 +189,7 @@ def _remove_published_file(path: Path, identity: tuple[int, int]) -> None:
             return
         try:
             moved_identity = _file_identity(quarantine)
-        except (OSError, UnsafeStoragePathError):
+        except OSError, UnsafeStoragePathError:
             _restore_quarantined_file(quarantine, path)
             raise UnsafeStoragePathError("published WAV changed before cleanup") from None
         if moved_identity == identity:

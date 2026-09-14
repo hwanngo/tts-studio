@@ -25,8 +25,12 @@ def test_fresh_database_has_singleton_defaults_and_typed_columns(tmp_path: Path)
     with sqlite3.connect(database.path) as connection:
         columns = [row[1] for row in connection.execute("PRAGMA table_info(core_settings)")]
         assert columns == [
-            "singleton", "retain_audio_by_default", "artifact_max_age_days",
-            "artifact_max_storage_bytes", "api_token_env", "updated_at",
+            "singleton",
+            "retain_audio_by_default",
+            "artifact_max_age_days",
+            "artifact_max_storage_bytes",
+            "api_token_env",
+            "updated_at",
         ]
         assert connection.execute("SELECT COUNT(*) FROM core_settings").fetchone()[0] == 1
         declared = {
@@ -41,9 +45,13 @@ def test_fresh_database_has_singleton_defaults_and_typed_columns(tmp_path: Path)
             "api_token_env": ("TEXT", 0, None),
             "updated_at": ("TEXT", 1, None),
         }
-        schema_sql = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'core_settings'"
-        ).fetchone()[0].upper()
+        schema_sql = (
+            connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'core_settings'"
+            )
+            .fetchone()[0]
+            .upper()
+        )
         assert "CHECK (SINGLETON = 1)" in schema_sql
         assert "IN (0, 1)" in schema_sql
         assert "IS NULL OR ARTIFACT_MAX_AGE_DAYS > 0" in schema_sql
@@ -65,17 +73,23 @@ def test_update_changes_only_supplied_fields_and_supports_nullable_limits(tmp_pa
     )
     assert updated == CoreSettings(False, 30, 1000, "TTS_API_TOKEN")
     with sqlite3.connect(database.path) as connection:
-        assert connection.execute(
-            "SELECT retain_audio_by_default FROM core_settings"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT retain_audio_by_default FROM core_settings").fetchone()[0]
+            == 0
+        )
 
-    assert repository.update(retain_audio_by_default=True) == CoreSettings(True, 30, 1000, "TTS_API_TOKEN")
+    assert repository.update(retain_audio_by_default=True) == CoreSettings(
+        True, 30, 1000, "TTS_API_TOKEN"
+    )
     with sqlite3.connect(database.path) as connection:
-        assert connection.execute(
-            "SELECT retain_audio_by_default FROM core_settings"
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute("SELECT retain_audio_by_default FROM core_settings").fetchone()[0]
+            == 1
+        )
 
-    assert repository.update(artifact_max_age_days=None) == CoreSettings(True, None, 1000, "TTS_API_TOKEN")
+    assert repository.update(artifact_max_age_days=None) == CoreSettings(
+        True, None, 1000, "TTS_API_TOKEN"
+    )
 
 
 def test_reset_or_initialize_is_idempotent_and_preserves_unrelated_rows(tmp_path: Path) -> None:

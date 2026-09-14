@@ -49,7 +49,9 @@ def _registry(tmp_path: Path) -> GenerationRegistry:
     return registry
 
 
-def _stored_result(*, unit: object = "word", transcript: str = "hello world", units: object | None = None) -> str:
+def _stored_result(
+    *, unit: object = "word", transcript: str = "hello world", units: object | None = None
+) -> str:
     return json.dumps(
         {
             "schema_version": 1,
@@ -60,7 +62,9 @@ def _stored_result(*, unit: object = "word", transcript: str = "hello world", un
             "total_frames": 2,
             "unit": unit,
             "aligner": "fake-aligner",
-            "units": units if units is not None else [
+            "units": units
+            if units is not None
+            else [
                 {
                     "text": "hello world",
                     "source_start": 0,
@@ -123,9 +127,7 @@ def test_get_alignment_rejects_escaped_lone_surrogate_as_typed_error(tmp_path: P
 
 
 @pytest.mark.parametrize("state", ("queued", "running", "completed", "failed"))
-def test_resume_alignments_normalizes_malformed_persisted_rows(
-    tmp_path: Path, state: str
-) -> None:
+def test_resume_alignments_normalizes_malformed_persisted_rows(tmp_path: Path, state: str) -> None:
     registry = _registry(tmp_path)
     with registry._database.transaction() as connection:
         connection.execute("PRAGMA ignore_check_constraints = ON")
@@ -187,7 +189,9 @@ def test_worker_result_rejects_empty_units_for_non_empty_transcript() -> None:
         service_module._alignment_result_from_worker(
             response,
             job=type("Job", (), {"id": "job-one", "text": "hello world"})(),
-            artifact=type("Artifact", (), {"id": "artifact-one", "sample_rate": 48_000, "frame_count": 2})(),
+            artifact=type(
+                "Artifact", (), {"id": "artifact-one", "sample_rate": 48_000, "frame_count": 2}
+            )(),
             capability=AlignmentCapability(("word",), ("en",), "fake-aligner"),
         )
 

@@ -58,7 +58,9 @@ async def test_describe_reports_foundation_contract(auth_context) -> None:
 
 
 @pytest.mark.asyncio
-async def test_align_returns_deterministic_word_units_from_managed_wav(tmp_path, auth_context) -> None:
+async def test_align_returns_deterministic_word_units_from_managed_wav(
+    tmp_path, auth_context
+) -> None:
     audio = tmp_path / "audio" / "artifact.wav"
     audio.parent.mkdir()
     with wave.open(str(audio), "wb") as stream:
@@ -67,8 +69,12 @@ async def test_align_returns_deterministic_word_units_from_managed_wav(tmp_path,
         stream.setframerate(48_000)
         stream.writeframes(b"\x00\x00" * 4_800)
     worker = FakeEngineWorker("secret", tmp_path / "staging")
-    await worker.LoadModel(engine_pb2.LoadModelRequest(model_id="model-1", variant="int8"), auth_context("secret"))
-    request = engine_pb2.AlignRequest(model_id="model-1", audio_path="audio/artifact.wav", transcript="hello world")
+    await worker.LoadModel(
+        engine_pb2.LoadModelRequest(model_id="model-1", variant="int8"), auth_context("secret")
+    )
+    request = engine_pb2.AlignRequest(
+        model_id="model-1", audio_path="audio/artifact.wav", transcript="hello world"
+    )
 
     first = await worker.Align(request, auth_context("secret"))
     second = await worker.Align(request, auth_context("secret"))
@@ -79,7 +85,10 @@ async def test_align_returns_deterministic_word_units_from_managed_wav(tmp_path,
     assert (first.result.sample_rate_hz, first.result.total_frames) == (48_000, 4_800)
     assert first.result.unit == "word"
     assert first.result.aligner == "fake-aligner/1.0"
-    assert [(unit.text, unit.source_start, unit.source_end, unit.start_frames, unit.end_frames) for unit in first.result.units] == [
+    assert [
+        (unit.text, unit.source_start, unit.source_end, unit.start_frames, unit.end_frames)
+        for unit in first.result.units
+    ] == [
         ("hello", 0, 5, 0, 2_400),
         ("world", 6, 11, 2_400, 4_800),
     ]
@@ -91,15 +100,25 @@ async def test_align_preserves_utf8_source_byte_offsets(tmp_path, auth_context) 
     audio = tmp_path / "audio" / "artifact.wav"
     audio.parent.mkdir()
     with wave.open(str(audio), "wb") as stream:
-        stream.setnchannels(1); stream.setsampwidth(2); stream.setframerate(48_000); stream.writeframes(b"\x00\x00" * 900)
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(48_000)
+        stream.writeframes(b"\x00\x00" * 900)
     worker = FakeEngineWorker("secret", tmp_path / "staging")
-    await worker.LoadModel(engine_pb2.LoadModelRequest(model_id="model-1", variant="int8"), auth_context("secret"))
+    await worker.LoadModel(
+        engine_pb2.LoadModelRequest(model_id="model-1", variant="int8"), auth_context("secret")
+    )
     response = await worker.Align(
-        engine_pb2.AlignRequest(model_id="model-1", audio_path="audio/artifact.wav", transcript="Xin chào thế giới"),
+        engine_pb2.AlignRequest(
+            model_id="model-1", audio_path="audio/artifact.wav", transcript="Xin chào thế giới"
+        ),
         auth_context("secret"),
     )
     assert [(unit.text, unit.source_start, unit.source_end) for unit in response.result.units] == [
-        ("Xin", 0, 3), ("chào", 4, 9), ("thế", 10, 15), ("giới", 16, 22)
+        ("Xin", 0, 3),
+        ("chào", 4, 9),
+        ("thế", 10, 15),
+        ("giới", 16, 22),
     ]
     assert all(unit.estimated for unit in response.result.units)
 
@@ -109,15 +128,21 @@ async def test_align_rejects_unsafe_audio_paths(tmp_path, auth_context) -> None:
     audio = tmp_path / "audio" / "artifact.wav"
     audio.parent.mkdir()
     with wave.open(str(audio), "wb") as stream:
-        stream.setnchannels(1); stream.setsampwidth(2); stream.setframerate(48_000); stream.writeframes(b"\x00\x00" * 10)
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(48_000)
+        stream.writeframes(b"\x00\x00" * 10)
     outside = tmp_path / "outside.wav"
     outside.write_bytes(audio.read_bytes())
     (tmp_path / "audio" / "link.wav").symlink_to(outside)
     worker = FakeEngineWorker("secret", tmp_path / "staging")
-    await worker.LoadModel(engine_pb2.LoadModelRequest(model_id="model-1", variant="int8"), auth_context("secret"))
+    await worker.LoadModel(
+        engine_pb2.LoadModelRequest(model_id="model-1", variant="int8"), auth_context("secret")
+    )
     for path in ("audio/../outside.wav", "audio\\artifact.wav", "audio/link.wav"):
         response = await worker.Align(
-            engine_pb2.AlignRequest(model_id="model-1", audio_path=path, transcript="hello"), auth_context("secret")
+            engine_pb2.AlignRequest(model_id="model-1", audio_path=path, transcript="hello"),
+            auth_context("secret"),
         )
         assert response.error.code == "alignment_failed"
 
@@ -128,11 +153,19 @@ async def test_align_rejects_nul_and_bounded_requests(tmp_path, auth_context, tr
     audio = tmp_path / "audio" / "artifact.wav"
     audio.parent.mkdir()
     with wave.open(str(audio), "wb") as stream:
-        stream.setnchannels(1); stream.setsampwidth(2); stream.setframerate(48_000); stream.writeframes(b"\x00\x00" * 10)
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(48_000)
+        stream.writeframes(b"\x00\x00" * 10)
     worker = FakeEngineWorker("secret", tmp_path / "staging")
-    await worker.LoadModel(engine_pb2.LoadModelRequest(model_id="model-1", variant="int8"), auth_context("secret"))
+    await worker.LoadModel(
+        engine_pb2.LoadModelRequest(model_id="model-1", variant="int8"), auth_context("secret")
+    )
     response = await worker.Align(
-        engine_pb2.AlignRequest(model_id="model-1", audio_path="audio/artifact.wav", transcript=transcript), auth_context("secret")
+        engine_pb2.AlignRequest(
+            model_id="model-1", audio_path="audio/artifact.wav", transcript=transcript
+        ),
+        auth_context("secret"),
     )
     assert not response.HasField("result")
     assert response.error.code == "alignment_request_invalid"
@@ -141,9 +174,15 @@ async def test_align_rejects_nul_and_bounded_requests(tmp_path, auth_context, tr
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("mode", "expected_code"),
-    [("error", "alignment_failed"), ("timeout", "alignment_deadline_exceeded"), ("cancelled", "alignment_cancelled")],
+    [
+        ("error", "alignment_failed"),
+        ("timeout", "alignment_deadline_exceeded"),
+        ("cancelled", "alignment_cancelled"),
+    ],
 )
-async def test_align_test_controls_return_stable_failures(tmp_path, auth_context, mode, expected_code) -> None:
+async def test_align_test_controls_return_stable_failures(
+    tmp_path, auth_context, mode, expected_code
+) -> None:
     audio = tmp_path / "audio" / "artifact.wav"
     audio.parent.mkdir()
     with wave.open(str(audio), "wb") as stream:
@@ -152,10 +191,14 @@ async def test_align_test_controls_return_stable_failures(tmp_path, auth_context
         stream.setframerate(48_000)
         stream.writeframes(b"\x00\x00" * 480)
     worker = FakeEngineWorker("secret", tmp_path / "staging", alignment_mode=mode)
-    await worker.LoadModel(engine_pb2.LoadModelRequest(model_id="model-1", variant="int8"), auth_context("secret"))
+    await worker.LoadModel(
+        engine_pb2.LoadModelRequest(model_id="model-1", variant="int8"), auth_context("secret")
+    )
 
     response = await worker.Align(
-        engine_pb2.AlignRequest(model_id="model-1", audio_path="audio/artifact.wav", transcript="hello"),
+        engine_pb2.AlignRequest(
+            model_id="model-1", audio_path="audio/artifact.wav", transcript="hello"
+        ),
         auth_context("secret"),
     )
 
@@ -165,7 +208,9 @@ async def test_align_test_controls_return_stable_failures(tmp_path, auth_context
 
 
 @pytest.mark.asyncio
-async def test_align_malformed_control_returns_empty_units_for_core_validation(tmp_path, auth_context) -> None:
+async def test_align_malformed_control_returns_empty_units_for_core_validation(
+    tmp_path, auth_context
+) -> None:
     audio = tmp_path / "audio" / "artifact.wav"
     audio.parent.mkdir()
     with wave.open(str(audio), "wb") as stream:
@@ -174,16 +219,22 @@ async def test_align_malformed_control_returns_empty_units_for_core_validation(t
         stream.setframerate(48_000)
         stream.writeframes(b"\x00\x00" * 480)
     worker = FakeEngineWorker("secret", tmp_path / "staging", alignment_mode="malformed")
-    await worker.LoadModel(engine_pb2.LoadModelRequest(model_id="model-1", variant="int8"), auth_context("secret"))
+    await worker.LoadModel(
+        engine_pb2.LoadModelRequest(model_id="model-1", variant="int8"), auth_context("secret")
+    )
     response = await worker.Align(
-        engine_pb2.AlignRequest(model_id="model-1", audio_path="audio/artifact.wav", transcript="hello"),
+        engine_pb2.AlignRequest(
+            model_id="model-1", audio_path="audio/artifact.wav", transcript="hello"
+        ),
         auth_context("secret"),
     )
     assert response.result.units == []
 
 
 @pytest.mark.asyncio
-async def test_validate_reference_requires_auth_and_returns_metadata(tmp_path, auth_context) -> None:
+async def test_validate_reference_requires_auth_and_returns_metadata(
+    tmp_path, auth_context
+) -> None:
     path = tmp_path / "staging" / "references" / "ref.wav"
     path.parent.mkdir(parents=True)
     with wave.open(str(path), "wb") as stream:
@@ -210,7 +261,9 @@ async def test_validate_reference_requires_auth_and_returns_metadata(tmp_path, a
 
 
 @pytest.mark.asyncio
-async def test_reference_synthesis_is_deterministic_and_consumes_file(tmp_path, auth_context) -> None:
+async def test_reference_synthesis_is_deterministic_and_consumes_file(
+    tmp_path, auth_context
+) -> None:
     reference_root = tmp_path / "staging"
     path = reference_root / "references" / "ref.wav"
     path.parent.mkdir(parents=True)
@@ -255,7 +308,10 @@ async def test_reference_synthesis_rejects_redirected_component_during_open(
 
     def swap_before_final_open(name, *args, **kwargs):
         nonlocal swapped
-        if not swapped and __import__("os").path.basename(__import__("os").fspath(name)) == "ref.wav":
+        if (
+            not swapped
+            and __import__("os").path.basename(__import__("os").fspath(name)) == "ref.wav"
+        ):
             swapped = True
             references.rename(tmp_path / "references-original")
             references.symlink_to(outside, target_is_directory=True)
@@ -284,9 +340,7 @@ async def test_health_reports_ready(auth_context) -> None:
     assert response.status == engine_pb2.HealthResponse.READY
 
 
-def test_entrypoint_uses_data_dir_for_staging(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_entrypoint_uses_data_dir_for_staging(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     token_file = tmp_path / "token"
     token_file.write_text("secret", encoding="utf-8")
     token_file.chmod(0o600)

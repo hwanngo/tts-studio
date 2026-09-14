@@ -102,7 +102,9 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def ValidateReference(
         self,
         request: engine_pb2.ValidateReferenceRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[
+            engine_pb2.ValidateReferenceRequest, engine_pb2.ValidateReferenceResponse
+        ],
     ) -> engine_pb2.ValidateReferenceResponse:
         await require_worker_token(context, self._token)
         return self._generation_service().validate_reference(request)
@@ -130,7 +132,9 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def LoadModel(
         self,
         request: engine_pb2.LoadModelRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[
+            engine_pb2.LoadModelRequest, engine_pb2.LoadModelResponse
+        ],
     ) -> engine_pb2.LoadModelResponse:
         await require_worker_token(context, self._token)
         return self._generation_service().load_model(request)
@@ -138,7 +142,9 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def UnloadModel(
         self,
         request: engine_pb2.UnloadModelRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[
+            engine_pb2.UnloadModelRequest, engine_pb2.UnloadModelResponse
+        ],
     ) -> engine_pb2.UnloadModelResponse:
         await require_worker_token(context, self._token)
         return self._generation_service().unload_model(request.model_id)
@@ -146,7 +152,9 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def ListVoices(
         self,
         request: engine_pb2.ListVoicesRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[
+            engine_pb2.ListVoicesRequest, engine_pb2.ListVoicesResponse
+        ],
     ) -> engine_pb2.ListVoicesResponse:
         await require_worker_token(context, self._token)
         return self._generation_service().list_voices(request.model_id)
@@ -154,7 +162,7 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def Align(
         self,
         request: engine_pb2.AlignRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[engine_pb2.AlignRequest, engine_pb2.AlignResponse],
     ) -> engine_pb2.AlignResponse:
         await require_worker_token(context, self._token)
         service = self._generation_service()
@@ -168,7 +176,9 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
                 )
             )
         if self._alignment_mode == "error":
-            return engine_pb2.AlignResponse(error=_alignment_error("alignment_failed", "Fake alignment failed"))
+            return engine_pb2.AlignResponse(
+                error=_alignment_error("alignment_failed", "Fake alignment failed")
+            )
         if self._alignment_mode == "timeout":
             return engine_pb2.AlignResponse(
                 error=_alignment_error(
@@ -187,7 +197,9 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
             request.transcript.encode("utf-8")
         except UnicodeEncodeError:
             return engine_pb2.AlignResponse(
-                error=_alignment_error("alignment_request_invalid", "Alignment transcript is invalid")
+                error=_alignment_error(
+                    "alignment_request_invalid", "Alignment transcript is invalid"
+                )
             )
         tokens = request.transcript.split()
         if (
@@ -197,7 +209,9 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
             or len(tokens) > _MAX_ALIGNMENT_UNITS
         ):
             return engine_pb2.AlignResponse(
-                error=_alignment_error("alignment_request_invalid", "Alignment request exceeds limits")
+                error=_alignment_error(
+                    "alignment_request_invalid", "Alignment request exceeds limits"
+                )
             )
         try:
             with (
@@ -213,8 +227,10 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
                     raise ValueError("unsupported audio")
                 sample_rate = stream.getframerate()
                 total_frames = stream.getnframes()
-        except (OSError, ValueError, wave.Error):
-            return engine_pb2.AlignResponse(error=_alignment_error("alignment_failed", "The audio file is unavailable"))
+        except OSError, ValueError, wave.Error:
+            return engine_pb2.AlignResponse(
+                error=_alignment_error("alignment_failed", "The audio file is unavailable")
+            )
         result = _alignment_result(request.transcript, sample_rate, total_frames, tokens=tokens)
         if self._alignment_mode == "malformed":
             result.units.clear()
@@ -227,13 +243,13 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
     async def Synthesize(
         self,
         request: engine_pb2.SynthesizeRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[engine_pb2.SynthesizeRequest, engine_pb2.SynthesisEvent],
     ) -> AsyncIterator[engine_pb2.SynthesisEvent]:
         await require_worker_token(context, self._token)
         service = self._generation_service()
         try:
             reference_bytes = service.reference_bytes(request)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             reference_bytes = None
         error = service.synthesize_error(request, reference_bytes=reference_bytes)
         if error is not None:
@@ -242,9 +258,10 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
 
         termination_recorded = [False]
         synthesis_completed = [False]
+        # types-grpcio models callbacks as a nominal class rather than a Protocol.
         context.add_done_callback(
-            lambda done_context: self._record_done_termination(
-                done_context, termination_recorded, synthesis_completed
+            lambda context: self._record_done_termination(  # type: ignore[arg-type]
+                context, termination_recorded, synthesis_completed
             )
         )
 
@@ -285,9 +302,7 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
                     )
                 return
             yield engine_pb2.SynthesisEvent(
-                chunk=engine_pb2.PcmChunk(
-                    sequence=sequence, pcm=pcm[offset : offset + chunk_size]
-                )
+                chunk=engine_pb2.PcmChunk(sequence=sequence, pcm=pcm[offset : offset + chunk_size])
             )
         yield engine_pb2.SynthesisEvent(
             progress=engine_pb2.SynthesisProgress(
@@ -314,7 +329,7 @@ class FakeEngineWorker(engine_pb2_grpc.EngineWorkerServicer):
 
     def _record_done_termination(
         self,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[engine_pb2.SynthesizeRequest, engine_pb2.SynthesisEvent],
         termination_recorded: list[bool],
         synthesis_completed: list[bool],
     ) -> None:
@@ -355,9 +370,7 @@ def _deterministic_pcm(
     return bytes(output)
 
 
-def _alignment_error(
-    code: str, message: str, *, retryable: bool = False
-) -> engine_pb2.WorkerError:
+def _alignment_error(code: str, message: str, *, retryable: bool = False) -> engine_pb2.WorkerError:
     return engine_pb2.WorkerError(
         code=code,
         message=message,
@@ -405,7 +418,9 @@ def _alignment_result(
     return result
 
 
-def _termination_error(context: grpc.aio.ServicerContext) -> engine_pb2.WorkerError | None:
+def _termination_error(
+    context: grpc.aio.ServicerContext[engine_pb2.SynthesizeRequest, engine_pb2.SynthesisEvent],
+) -> engine_pb2.WorkerError | None:
     remaining = context.time_remaining()
     if remaining is not None and remaining <= _DEADLINE_WARNING_SECONDS:
         return engine_pb2.WorkerError(

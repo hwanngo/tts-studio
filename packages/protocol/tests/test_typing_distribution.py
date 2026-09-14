@@ -111,9 +111,9 @@ async_stub.Describe(engine_pb2.HealthRequest())
 
     assert result.returncode == 1, output
     assert output.count("error: Incompatible types in assignment") == 8, output
-    assert (
-        output.count('has incompatible type "HealthRequest"; expected "DescribeRequest"') == 2
-    ), output
+    assert output.count('has incompatible type "HealthRequest"; expected "DescribeRequest"') == 2, (
+        output
+    )
     assert "EngineWorkerStub" in output
     assert "EngineWorkerAsyncStub" in output
     assert "DescribeResponse" in output

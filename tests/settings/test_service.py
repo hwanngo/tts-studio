@@ -19,6 +19,14 @@ from tts_studio.storage.db import Database
 from tts_studio.storage.layout import StorageLayout
 
 
+def _identity_bound_deletion_setup_available() -> bool:
+    return (
+        all(hasattr(os, name) for name in ("O_NOFOLLOW", "O_DIRECTORY", "O_CLOEXEC"))
+        and os.open in getattr(os, "supports_dir_fd", ())
+        and os.stat in getattr(os, "supports_dir_fd", ())
+    )
+
+
 def _setup(tmp_path: Path):
     layout = StorageLayout.from_root(tmp_path / "data")
     layout.ensure()
@@ -130,6 +138,10 @@ def test_summary_counts_retained_artifacts_and_bytes(tmp_path: Path) -> None:
     assert str(layout.root) not in repr(summary)
 
 
+@pytest.mark.skipif(
+    not _identity_bound_deletion_setup_available(),
+    reason="identity-bound artifact deletion setup is unavailable on this platform",
+)
 def test_clear_retention_deletes_every_artifact_regardless_of_policy_limits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -184,6 +196,10 @@ def test_clear_retention_reports_filesystem_failures_without_absolute_paths(
     assert registry.get_job(artifact.job_id).artifact_id == artifact.id
 
 
+@pytest.mark.skipif(
+    not _identity_bound_deletion_setup_available(),
+    reason="identity-bound artifact deletion setup is unavailable on this platform",
+)
 def test_clear_retention_deletes_all_artifacts_with_equal_timestamps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

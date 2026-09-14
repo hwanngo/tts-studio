@@ -37,7 +37,11 @@ def recover_download_scratch(data_root: Path) -> None:
         if stat.S_ISDIR(metadata.st_mode):
             if _is_below(entry, scratch) and _same_entry_identity(entry, identity):
                 shutil.rmtree(entry)
-        elif stat.S_ISREG(metadata.st_mode) and _is_below(entry, scratch) and _same_entry_identity(entry, identity):
+        elif (
+            stat.S_ISREG(metadata.st_mode)
+            and _is_below(entry, scratch)
+            and _same_entry_identity(entry, identity)
+        ):
             entry.unlink()
 
 
@@ -60,11 +64,11 @@ def _directory_identity(path: Path) -> tuple[int, int]:
     return metadata.st_dev, metadata.st_ino
 
 
-def _entry_identity(metadata: os.stat_result) -> tuple[int, int]:
-    return metadata.st_dev, metadata.st_ino
+def _entry_identity(metadata: os.stat_result) -> tuple[int, int, int]:
+    return metadata.st_dev, metadata.st_ino, metadata.st_ctime_ns
 
 
-def _same_entry_identity(path: Path, identity: tuple[int, int]) -> bool:
+def _same_entry_identity(path: Path, identity: tuple[int, int, int]) -> bool:
     try:
         metadata = path.lstat()
     except OSError:
@@ -75,6 +79,6 @@ def _same_entry_identity(path: Path, identity: tuple[int, int]) -> bool:
 def _is_below(path: Path, root: Path) -> bool:
     try:
         path.resolve(strict=True).relative_to(root.resolve(strict=True))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return False
     return True

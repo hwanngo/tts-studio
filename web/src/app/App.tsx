@@ -12,10 +12,20 @@ import {
   Sparkles,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, useLocation } from "react-router-dom";
-import { fetchSystemStatus, type SystemStatusResult } from "../lib/api";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  ApiError,
+  fetchSystemStatus,
+  setBrowserApiToken,
+  subscribeToAuthenticationFailure,
+  type SystemStatusResult,
+} from "../lib/api";
 import { AppRoutes } from "./routes";
 
 type NavigationItem = {
@@ -65,27 +75,83 @@ export function App() {
   const { t, i18n } = useTranslation();
   const [systemStatus, setSystemStatus] = useState<SystemStatusResult>({ state: "loading" });
   const [theme, setTheme] = useState<Theme>(readTheme);
+  const [authenticationRequired, setAuthenticationRequired] = useState(false);
+  const [authenticationError, setAuthenticationError] = useState(false);
+  const [authenticating, setAuthenticating] = useState(false);
+  const [tokenInput, setTokenInput] = useState("");
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
+  const tokenInputRef = useRef<HTMLInputElement>(null);
   const previousPathname = useRef(location.pathname);
+  const systemRequestVersion = useRef(0);
+
+  useEffect(() => {
+    if (authenticationRequired) tokenInputRef.current?.focus();
+  }, [authenticationRequired]);
 
   useEffect(() => {
     const controller = new AbortController();
+    const unsubscribe = subscribeToAuthenticationFailure(() => {
+      systemRequestVersion.current += 1;
+      setAuthenticationRequired(true);
+      setAuthenticationError(true);
+    });
+    const requestVersion = ++systemRequestVersion.current;
 
     fetchSystemStatus(controller.signal).then(
-      (value) => setSystemStatus({ state: "ready", value }),
+      (value) => {
+        if (!controller.signal.aborted && requestVersion === systemRequestVersion.current) {
+          setSystemStatus({ state: "ready", value });
+        }
+      },
       (error: unknown) => {
-        if (!controller.signal.aborted) {
-          setSystemStatus({
-            state: "error",
-            message: error instanceof Error ? error.message : t("status.error"),
-          });
+        if (!controller.signal.aborted && requestVersion === systemRequestVersion.current) {
+          if (error instanceof ApiError && error.code === "authentication_failed") {
+            setAuthenticationRequired(true);
+          } else {
+            setSystemStatus({
+              state: "error",
+              message: error instanceof Error ? error.message : t("status.error"),
+            });
+          }
         }
       },
     );
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      unsubscribe();
+    };
   }, []);
+
+  async function authenticate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const token = tokenInput.trim();
+    if (!token) return;
+    const requestVersion = ++systemRequestVersion.current;
+    setAuthenticating(true);
+    setAuthenticationError(false);
+    setBrowserApiToken(token);
+    try {
+      const value = await fetchSystemStatus();
+      if (requestVersion !== systemRequestVersion.current) return;
+      setSystemStatus({ state: "ready", value });
+      setAuthenticationRequired(false);
+      setTokenInput("");
+    } catch (error) {
+      if (requestVersion !== systemRequestVersion.current) return;
+      if (error instanceof ApiError && error.code === "authentication_failed") {
+        setAuthenticationError(true);
+      } else {
+        setSystemStatus({
+          state: "error",
+          message: error instanceof Error ? error.message : t("status.error"),
+        });
+      }
+    } finally {
+      setAuthenticating(false);
+    }
+  }
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -173,7 +239,40 @@ export function App() {
       </aside>
 
       <main ref={mainRef} id="main-content" className="main-content" tabIndex={-1}>
-        <AppRoutes systemStatus={systemStatus} theme={theme} onThemeChange={setTheme} />
+        {authenticationRequired ? (
+          <div className="authentication-gate">
+            <Card
+              className="authentication-card"
+              role="dialog"
+              aria-labelledby="authentication-title"
+              aria-describedby="authentication-description"
+            >
+              <form onSubmit={(event) => void authenticate(event)}>
+                <h1 id="authentication-title">{t("authentication.title")}</h1>
+                <p id="authentication-description">{t("authentication.description")}</p>
+                {authenticationError ? (
+                  <Alert variant="error" role="alert">{t("authentication.failed")}</Alert>
+                ) : null}
+                <Input
+                  autoComplete="current-password"
+                  label={t("authentication.tokenLabel")}
+                  hint={t("authentication.tokenHint")}
+                  name="api-token"
+                  ref={tokenInputRef}
+                  type="password"
+                  required
+                  value={tokenInput}
+                  onChange={(event) => setTokenInput(event.target.value)}
+                />
+                <Button type="submit" disabled={authenticating || !tokenInput.trim()}>
+                  {authenticating ? t("authentication.connecting") : t("authentication.connect")}
+                </Button>
+              </form>
+            </Card>
+          </div>
+        ) : (
+          <AppRoutes systemStatus={systemStatus} theme={theme} onThemeChange={setTheme} />
+        )}
       </main>
     </div>
   );

@@ -22,6 +22,8 @@ from tts_studio.config import Settings
 from tts_studio.server.app import create_app
 
 runner = CliRunner()
+_CORE_STARTUP_TIMEOUT_SECONDS = 20
+_CORE_THREAD_JOIN_TIMEOUT_SECONDS = 10
 
 
 @pytest.fixture
@@ -30,31 +32,32 @@ def core_url(tmp_path: Path) -> Iterator[str]:
     if sys.platform == "win32":
         pytest.skip("threaded Uvicorn Core fixtures cannot start Worker adapters on Windows CI")
     data_dir = tmp_path / ".tts-studio"
-    core = create_app(Settings.resolve(data_dir), include_test_adapters=True)
-
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
     listener.listen()
     host, port = listener.getsockname()
+    core = create_app(Settings(data_dir=data_dir, host=host, port=port), include_test_adapters=True)
     server = uvicorn.Server(uvicorn.Config(core, log_level="critical"))
     thread = Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
     thread.start()
 
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + _CORE_STARTUP_TIMEOUT_SECONDS
     while not server.started and time.monotonic() < deadline:
         time.sleep(0.01)
     if not server.started:
         server.should_exit = True
-        thread.join(timeout=5)
-        listener.close()
-        pytest.fail("Core did not start within five seconds")
+        thread.join(timeout=_CORE_THREAD_JOIN_TIMEOUT_SECONDS)
+        if not thread.is_alive():
+            listener.close()
+        pytest.fail("Core did not start within the startup timeout")
 
     try:
         yield f"http://{host}:{port}"
     finally:
         server.should_exit = True
-        thread.join(timeout=5)
-        listener.close()
+        thread.join(timeout=_CORE_THREAD_JOIN_TIMEOUT_SECONDS)
+        if not thread.is_alive():
+            listener.close()
 
 
 def _download(core_url: str, repository_id: str = "fixtures/compatible") -> dict[str, object]:

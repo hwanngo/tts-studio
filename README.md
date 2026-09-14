@@ -9,9 +9,9 @@ optimized for Apple Silicon through its ONNX CPU backend while retaining Windows
 
 ## Project status
 
-The application includes model management, deterministic fake generation, Core-owned WAV artifacts,
-reference-recording cloning, HTTP/CLI behavior, detached control, per-user login services, Worker
-runtime upgrade/rollback, and a Studio UI in English (US) and Vietnamese (Vietnam).
+The application includes model management, configurable Worker Replicas, Core-owned WAV artifacts,
+reference-recording cloning, authenticated HTTP/CLI behavior, detached control, per-user login
+services, Worker runtime upgrade/rollback, and a Studio UI in English (US) and Vietnamese (Vietnam).
 
 See the [documentation index](docs/README.md) and [architecture](docs/architecture.md).
 
@@ -30,10 +30,9 @@ Open <http://127.0.0.1:7860/>. Runtime data is created under the resolved reposi
 `.tts-studio/` directory unless `--data-dir` or `TTS_STUDIO_DATA_DIR` overrides it. Non-loopback
 serving requires a configured bearer token; see [HTTP API security](docs/http-api.md).
 
-## Available and planned commands
+## Core commands
 
-The model-management and generation surfaces are implemented in the Core and CLI. The broader
-experience is being delivered incrementally:
+The Core and CLI provide the following primary commands:
 
 ```console
 tts serve
@@ -47,9 +46,16 @@ tts runtime status
 tts models validate pnnbao-ump/VieNeu-TTS-v3-Turbo
 tts models list
 tts models download pnnbao-ump/VieNeu-TTS-v3-Turbo
-tts voices list
-tts speak "Xin chào" --model vieneu --voice "Adam" --output speech.wav
-tts speak --model vieneu --voice "Adam" --file article.txt --output speech.wav
+```
+
+After a download completes, it prints `Model: <model-installation-id>`. Use that installation ID
+(not the repository or engine label) to list the preset voices, then use the returned voice ID for
+synthesis:
+
+```console
+tts voices list --model <model-installation-id>
+tts speak "Xin chào" --model <model-installation-id> --voice <voice-id> --output speech.wav
+tts speak --model <model-installation-id> --voice <voice-id> --file article.txt --output speech.wav
 ```
 
 ## Development

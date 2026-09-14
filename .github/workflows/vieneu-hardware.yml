@@ -1,0 +1,42 @@
+name: VieNeu hardware gate
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+# This workflow is intentionally never triggered by pull requests. It executes
+# only on the controlled runner that owns the pre-provisioned offline cache.
+permissions:
+  contents: read
+
+concurrency:
+  group: vieneu-hardware
+  cancel-in-progress: false
+
+jobs:
+  real-model:
+    name: Cache-pinned real-model smoke
+    runs-on: [self-hosted, linux, x64, tts-studio-vieneu-hardware]
+    timeout-minutes: 20
+    env:
+      TTS_STUDIO_RUN_VIENEU_HARDWARE: '1'
+      TTS_STUDIO_VIENEU_MODEL_CACHE: /var/lib/tts-studio/vieneu-cache
+      UV_PYTHON: '3.14'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require runner-provisioned Python and uv
+        run: |
+          python3 -c 'import sys; assert sys.version_info[:2] == (3, 14), sys.version'
+          uv --version
+      - name: Validate the complete provisioned cache
+        run: >-
+          python3 scripts/check_vieneu_hardware_cache.py
+          --cache "$TTS_STUDIO_VIENEU_MODEL_CACHE"
+      - name: Run the offline real-model gate
+        run: >-
+          uv run --offline --frozen --project . pytest
+          tests/integration/test_vieneu_hardware.py -q -s

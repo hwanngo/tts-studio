@@ -50,10 +50,7 @@ def _write_verified_worker_environment(environment: Path) -> Path:
                 "Requires-Dist: tts-studio-protocol\n"
                 "Requires-Dist: tts-studio-worker-sdk\n"
             ),
-            (
-                "[console_scripts]\n"
-                "tts-studio-fake-worker = tts_studio_fake_worker.main:main\n"
-            ),
+            ("[console_scripts]\ntts-studio-fake-worker = tts_studio_fake_worker.main:main\n"),
         ),
         "tts_studio_protocol-0.1.0.dist-info": (
             "Name: tts-studio-protocol\nVersion: 0.1.0\n",
@@ -108,10 +105,7 @@ def _write_verified_vieneu_worker_environment(environment: Path) -> Path:
                 "Requires-Dist: tts-studio-worker-sdk\n"
                 "Requires-Dist: vieneu==3.6.3\n"
             ),
-            (
-                "[console_scripts]\n"
-                "tts-studio-vieneu-worker = tts_studio_vieneu_worker.main:main\n"
-            ),
+            ("[console_scripts]\ntts-studio-vieneu-worker = tts_studio_vieneu_worker.main:main\n"),
         ),
         "tts_studio_protocol-0.1.0.dist-info": (
             "Name: tts-studio-protocol\nVersion: 0.1.0\n",

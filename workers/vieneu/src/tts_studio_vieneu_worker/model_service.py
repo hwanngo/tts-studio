@@ -64,11 +64,7 @@ _CODEC_FILES = (
     "moss_audio_tokenizer_encode.onnx",
 )
 _REQUIRED_MANIFEST_FILES = tuple(
-    [
-        f"backbone/{variant}/{name}"
-        for variant in _VARIANTS
-        for name in _GRAPH_FILES
-    ]
+    [f"backbone/{variant}/{name}" for variant in _VARIANTS for name in _GRAPH_FILES]
     + [f"cloning/{name}" for name in _CLONING_FILES]
     + [f"codec/{name}" for name in _CODEC_FILES]
 )
@@ -97,9 +93,13 @@ class VieNeuModelService:
         self._repository = repository or HuggingFaceRepositoryClient()
         self._data_root = _canonical_data_root(data_root)
 
-    def validate(self, request: engine_pb2.ValidateModelRequest) -> engine_pb2.ValidateModelResponse:
+    def validate(
+        self, request: engine_pb2.ValidateModelRequest
+    ) -> engine_pb2.ValidateModelResponse:
         if request.repository_id != TARGET_REPOSITORY:
-            return self._error_response("model_incompatible", "The repository is not compatible with VieNeu")
+            return self._error_response(
+                "model_incompatible", "The repository is not compatible with VieNeu"
+            )
         requested = request.requested_revision if request.HasField("requested_revision") else None
         try:
             info = self._repository.model_info(TARGET_REPOSITORY, requested)
@@ -128,7 +128,9 @@ class VieNeuModelService:
             code, message, retryable = _repository_error(error)
             return self._error_response(code, message, retryable=retryable)
         if missing:
-            response = self._error_response("model_incompatible", "Required VieNeu artifacts are missing")
+            response = self._error_response(
+                "model_incompatible", "Required VieNeu artifacts are missing"
+            )
             response.error.details["missing_file"] = missing[0]
             return response
         response = engine_pb2.ValidateModelResponse(
@@ -139,7 +141,8 @@ class VieNeuModelService:
             engine_version=ENGINE_VERSION,
             required_files=list(_REQUIRED_MANIFEST_FILES),
             available_variants=[
-                engine_pb2.ModelVariant(id=variant, label=label) for variant, (label, _) in _VARIANTS.items()
+                engine_pb2.ModelVariant(id=variant, label=label)
+                for variant, (label, _) in _VARIANTS.items()
             ],
             estimated_bytes=estimated_bytes,
             evidence=[
@@ -172,26 +175,36 @@ class VieNeuModelService:
         owned_dirs: list[tuple[Path, tuple[int, int]]] = []
         succeeded = False
 
-        def progress(phase: int, downloaded: int, total: int | None, message: str):
+        def progress(
+            phase: engine_pb2.DownloadPhase.ValueType,
+            downloaded: int,
+            total: int | None,
+            message: str,
+        ) -> engine_pb2.DownloadModelEvent:
             nonlocal sequence
             sequence += 1
-            kwargs = {"sequence": sequence, "phase": phase, "bytes_downloaded": downloaded, "message": message}
-            if total is not None:
-                kwargs["total_bytes"] = total
-            return engine_pb2.DownloadModelEvent(progress=engine_pb2.DownloadProgress(**kwargs))
+            return engine_pb2.DownloadModelEvent(
+                progress=engine_pb2.DownloadProgress(
+                    sequence=sequence,
+                    phase=phase,
+                    bytes_downloaded=downloaded,
+                    message=message,
+                    total_bytes=total,
+                )
+            )
 
         try:
             if request.repository_id != TARGET_REPOSITORY or request.variant not in _VARIANTS:
-                raise _DownloadFailure("invalid_request", "The requested VieNeu model selection is invalid")
+                raise _DownloadFailure(
+                    "invalid_request", "The requested VieNeu model selection is invalid"
+                )
             (
                 destination,
                 destination_preexisting,
                 destination_identity,
                 staging_root,
                 staging_root_identity,
-            ) = self._staging_path(
-                request.staging_destination
-            )
+            ) = self._staging_path(request.staging_destination)
             _check_cancelled(context)
             self._assert_staging_root(staging_root, staging_root_identity)
             info = await self._repository_call(
@@ -199,18 +212,28 @@ class VieNeuModelService:
             )
             revision = _commit(info)
             if revision != request.resolved_commit:
-                raise _DownloadFailure("revision_not_found", "The requested model revision is unavailable")
+                raise _DownloadFailure(
+                    "revision_not_found", "The requested model revision is unavailable"
+                )
             model_names = _file_names(
-                await self._repository_call(self._repository.list_files, TARGET_REPOSITORY, revision)
+                await self._repository_call(
+                    self._repository.list_files, TARGET_REPOSITORY, revision
+                )
             )
             codec_names = _file_names(
-                await self._repository_call(self._repository.list_files, CODEC_REPOSITORY, CODEC_REVISION)
+                await self._repository_call(
+                    self._repository.list_files, CODEC_REPOSITORY, CODEC_REVISION
+                )
             )
             codec_revision = _commit(
-                await self._repository_call(self._repository.model_info, CODEC_REPOSITORY, CODEC_REVISION)
+                await self._repository_call(
+                    self._repository.model_info, CODEC_REPOSITORY, CODEC_REVISION
+                )
             )
             if codec_revision != CODEC_REVISION:
-                raise _DownloadFailure("model_incompatible", "The pinned codec revision is unavailable")
+                raise _DownloadFailure(
+                    "model_incompatible", "The pinned codec revision is unavailable"
+                )
             model_patterns = [
                 f"{variant_dir}/{name}"
                 for _, variant_dir in _VARIANTS.values()
@@ -219,8 +242,12 @@ class VieNeuModelService:
             missing = [name for name in model_patterns if name not in model_names]
             missing.extend(name for name in _CODEC_FILES if name not in codec_names)
             if missing:
-                raise _DownloadFailure("model_incompatible", "Required VieNeu artifacts are missing", missing[0])
-            yield progress(engine_pb2.DOWNLOAD_PHASE_DOWNLOADING, 0, None, "Downloading VieNeu artifacts")
+                raise _DownloadFailure(
+                    "model_incompatible", "Required VieNeu artifacts are missing", missing[0]
+                )
+            yield progress(
+                engine_pb2.DOWNLOAD_PHASE_DOWNLOADING, 0, None, "Downloading VieNeu artifacts"
+            )
             self._assert_staging_root(staging_root, staging_root_identity)
             scratch_root = self._scratch_root()
             work_root = scratch_root.path
@@ -292,10 +319,14 @@ class VieNeuModelService:
                 self._assert_staging_root(staging_root, staging_root_identity)
                 copied += target.stat().st_size
             _remove_tree_no_follow(work, expected_identity=work_identity)
-            yield progress(engine_pb2.DOWNLOAD_PHASE_VERIFYING, copied, copied, "Verifying VieNeu artifacts")
+            yield progress(
+                engine_pb2.DOWNLOAD_PHASE_VERIFYING, copied, copied, "Verifying VieNeu artifacts"
+            )
             self._assert_staging_root(staging_root, staging_root_identity)
             files = [_manifest_file(destination.path, target) for _, target in expected]
-            yield progress(engine_pb2.DOWNLOAD_PHASE_FINALIZING, copied, copied, "Finalizing VieNeu manifest")
+            yield progress(
+                engine_pb2.DOWNLOAD_PHASE_FINALIZING, copied, copied, "Finalizing VieNeu manifest"
+            )
             yield engine_pb2.DownloadModelEvent(
                 manifest=engine_pb2.ModelManifest(
                     repository_id=TARGET_REPOSITORY,
@@ -307,7 +338,9 @@ class VieNeuModelService:
             )
             succeeded = True
         except _Cancelled:
-            yield engine_pb2.DownloadModelEvent(error=_error("download_cancelled", "The model download was cancelled"))
+            yield engine_pb2.DownloadModelEvent(
+                error=_error("download_cancelled", "The model download was cancelled")
+            )
         except _DownloadFailure as error:
             details = {"missing_file": error.missing} if error.missing else {}
             yield engine_pb2.DownloadModelEvent(
@@ -315,13 +348,19 @@ class VieNeuModelService:
             )
         except OSError:
             yield engine_pb2.DownloadModelEvent(
-                error=_error("download_failed", "VieNeu artifacts could not be staged", retryable=True)
+                error=_error(
+                    "download_failed", "VieNeu artifacts could not be staged", retryable=True
+                )
             )
         except ValueError:
-            yield engine_pb2.DownloadModelEvent(error=_error("download_failed", "VieNeu artifacts could not be staged"))
+            yield engine_pb2.DownloadModelEvent(
+                error=_error("download_failed", "VieNeu artifacts could not be staged")
+            )
         except Exception:  # noqa: BLE001 - repository SDK errors are intentionally redacted
             yield engine_pb2.DownloadModelEvent(
-                error=_error("download_failed", "VieNeu artifacts could not be downloaded", retryable=True)
+                error=_error(
+                    "download_failed", "VieNeu artifacts could not be downloaded", retryable=True
+                )
             )
         finally:
             if destination is not None:
@@ -348,11 +387,13 @@ class VieNeuModelService:
     def _missing_model_files(self, files: set[str]) -> list[str]:
         missing: list[str] = []
         for _, prefix in _VARIANTS.values():
-            missing.extend(f"{prefix}/{name}" for name in _GRAPH_FILES if f"{prefix}/{name}" not in files)
+            missing.extend(
+                f"{prefix}/{name}" for name in _GRAPH_FILES if f"{prefix}/{name}" not in files
+            )
         missing.extend(name for name in _CLONING_FILES if name not in files)
         return missing
 
-    async def _repository_call(self, function: object, *args: object) -> object:
+    async def _repository_call[T](self, function: Callable[..., T], *args: object) -> T:
         try:
             return await _run_blocking(function, *args)
         except Exception as error:
@@ -454,8 +495,14 @@ def _repository_error(error: BaseException) -> tuple[str, str, bool]:
     # an offline/cache miss, not proof that the repository is incompatible.
     if isinstance(
         error,
-        (LocalEntryNotFoundError, OfflineModeIsEnabled, HfHubHTTPError, httpx.TransportError,
-         ConnectionError, TimeoutError),
+        (
+            LocalEntryNotFoundError,
+            OfflineModeIsEnabled,
+            HfHubHTTPError,
+            httpx.TransportError,
+            ConnectionError,
+            TimeoutError,
+        ),
     ):
         return "download_failed", "The repository could not be reached", True
     if isinstance(error, EntryNotFoundError):
@@ -494,12 +541,12 @@ def _file_names(entries: Iterable[object]) -> set[str]:
     return names
 
 
-def _estimated_bytes(entries: Iterable[object], required_names: Iterable[str], root_names: Iterable[str]) -> int:
+def _estimated_bytes(
+    entries: Iterable[object], required_names: Iterable[str], root_names: Iterable[str]
+) -> int:
     names = set(required_names) | set(root_names)
     return sum(
-        int(getattr(entry, "size", 0) or 0)
-        for entry in entries
-        if _entry_name(entry) in names
+        int(getattr(entry, "size", 0) or 0) for entry in entries if _entry_name(entry) in names
     )
 
 
@@ -535,18 +582,18 @@ def _make_directory_at(parent_fd: int, prefix: str) -> str:
 
 
 def _snapshot_download_in_directory(
-    function: object,
+    function: Callable[[str, str, Path, list[str]], None],
     work_fd: int,
     repo_id: str,
     revision: str,
     destination_name: str,
     allow_patterns: list[str],
-) -> object:
+) -> None:
     with _SNAPSHOT_CWD_LOCK:
         previous_fd = _open_directory_fd(Path("."))
         try:
             os.fchdir(work_fd)
-            return function(repo_id, revision, Path(destination_name), allow_patterns)
+            function(repo_id, revision, Path(destination_name), allow_patterns)
         finally:
             os.fchdir(previous_fd)
             os.close(previous_fd)
@@ -562,11 +609,11 @@ def _remove_workspace_no_follow(work: Path, identity: tuple[int, int], root: Pat
         _remove_tree_no_follow(work)
 
 
-async def _run_blocking(
-    function: object,
+async def _run_blocking[T](
+    function: Callable[..., T],
     *args: object,
     on_detached: Callable[[], None] | None = None,
-) -> object:
+) -> T:
     task = asyncio.create_task(asyncio.to_thread(function, *args))
     try:
         return await asyncio.shield(task)
@@ -583,16 +630,14 @@ async def _run_blocking(
         raise
 
 
-def _consume_blocking_result(task: asyncio.Task[object]) -> None:
+def _consume_blocking_result[T](task: asyncio.Task[T]) -> None:
     try:
         task.result()
     except BaseException:  # noqa: BLE001, S110 - detached SDK thread result is intentionally discarded
         pass
 
 
-def _consume_detached_result(
-    task: asyncio.Task[object], cleanup: Callable[[], None]
-) -> None:
+def _consume_detached_result[T](task: asyncio.Task[T], cleanup: Callable[[], None]) -> None:
     _consume_blocking_result(task)
     try:
         cleanup()
@@ -649,7 +694,10 @@ def _copy_regular_file(
                 raise ValueError("target is not a regular file")
             target_identity = (target_metadata.st_dev, target_metadata.st_ino)
             try:
-                with os.fdopen(source_fd, "rb") as source_stream, os.fdopen(target_fd, "wb") as target_stream:
+                with (
+                    os.fdopen(source_fd, "rb") as source_stream,
+                    os.fdopen(target_fd, "wb") as target_stream,
+                ):
                     source_fd = -1
                     target_fd = -1
                     shutil.copyfileobj(source_stream, target_stream)
@@ -745,7 +793,9 @@ def _manifest_file(root: Path, path: Path) -> engine_pb2.ManifestFile:
     if "\\" in relative:
         raise ValueError("manifest path contains a backslash")
     data = path.read_bytes()
-    return engine_pb2.ManifestFile(relative_path=relative, byte_size=len(data), sha256=hashlib.sha256(data).hexdigest())
+    return engine_pb2.ManifestFile(
+        relative_path=relative, byte_size=len(data), sha256=hashlib.sha256(data).hexdigest()
+    )
 
 
 def _error(
@@ -754,7 +804,9 @@ def _error(
     details: dict[str, str] | None = None,
     retryable: bool = False,
 ) -> engine_pb2.WorkerError:
-    return engine_pb2.WorkerError(code=code, message=message, retryable=retryable, details=details or {})
+    return engine_pb2.WorkerError(
+        code=code, message=message, retryable=retryable, details=details or {}
+    )
 
 
 def _canonical_data_root(value: Path) -> Path:
@@ -855,7 +907,7 @@ def _same_regular_identity(path: Path, identity: tuple[int, int]) -> bool:
 def _same_directory_identity(path: Path, identity: tuple[int, int]) -> bool:
     try:
         return _directory_identity(path) == identity
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return False
 
 
@@ -877,9 +929,7 @@ def _has_no_symlink_components(root: Path, path: Path) -> bool:
     return True
 
 
-def _remove_tree_no_follow(
-    path: Path, *, expected_identity: tuple[int, int] | None = None
-) -> None:
+def _remove_tree_no_follow(path: Path, *, expected_identity: tuple[int, int] | None = None) -> None:
     """Remove one path without following replacements during recursive cleanup."""
     parent_fd = _open_directory_fd(path.parent)
     try:
@@ -924,9 +974,7 @@ def _remove_directory_entry_at(
                     child_metadata = entry.stat(follow_symlinks=False)
                 except FileNotFoundError:
                     continue
-                entries.append(
-                    (entry.name, (child_metadata.st_dev, child_metadata.st_ino))
-                )
+                entries.append((entry.name, (child_metadata.st_dev, child_metadata.st_ino)))
         for child_name, child_identity in entries:
             _remove_directory_entry_at(directory_fd, child_name, child_identity)
     finally:

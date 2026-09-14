@@ -9,9 +9,7 @@ from tts_studio.services import ServicePlatform
 runner = CliRunner()
 
 
-def test_service_install_delegates_to_resolved_manager(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_service_install_delegates_to_resolved_manager(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
     class FakeManager:
@@ -25,9 +23,9 @@ def test_service_install_delegates_to_resolved_manager(
     monkeypatch.setattr(
         cli,
         "_service_manager",
-        lambda settings, platform: captured.update(
-            settings=settings, platform=platform
-        ) or FakeManager(),
+        lambda settings, platform: (
+            captured.update(settings=settings, platform=platform) or FakeManager()
+        ),
         raising=False,
     )
 

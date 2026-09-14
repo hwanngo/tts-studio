@@ -21,7 +21,7 @@ def validate_release_artifacts(
         raise ValueError(f"artifact directory must be an unredirected directory: {root}")
     if not root.is_dir():
         raise ValueError(f"artifact directory does not exist: {root}")
-    required = (
+    required: tuple[tuple[str, str], ...] = (
         ("tts_studio-", ".whl"),
         ("tts_studio-", ".tar.gz"),
         ("tts_studio_protocol-", ".whl"),

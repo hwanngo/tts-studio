@@ -106,8 +106,11 @@ async def delete_saved_voice(voice_id: str, request: Request) -> None:
 
 def _saved_voice_response(voice: SavedVoice) -> SavedVoiceResponse:
     return SavedVoiceResponse(
-        id=voice.id, model_id=voice.model_id, label=voice.label,
-        transcript_present=voice.transcript is not None, created_at=voice.created_at,
+        id=voice.id,
+        model_id=voice.model_id,
+        label=voice.label,
+        transcript_present=voice.transcript is not None,
+        created_at=voice.created_at,
     )
 
 
@@ -398,10 +401,10 @@ def _part_headers(raw: bytes) -> dict[str, str]:
             raise ValueError("Malformed multipart headers.")
         headers[name.casefold()] = value.strip()
     disposition = headers.get("content-disposition", "")
-    name = re.search(r'(?:^|;)\s*name="([^"]+)"', disposition)
-    if name is None:
+    name_match = re.search(r'(?:^|;)\s*name="([^"]+)"', disposition)
+    if name_match is None:
         raise ValueError("Multipart field name is missing.")
-    return {"name": name.group(1)}
+    return {"name": name_match.group(1)}
 
 
 def _write_part(
@@ -455,9 +458,7 @@ def _response(recording: Any) -> ReferenceResponse:
         transcript_present=recording.transcript_present,
         state=recording.state.value,
         evidence=[
-            ReferenceEvidence(
-                code="worker_validated", message="Validated by the selected Worker."
-            )
+            ReferenceEvidence(code="worker_validated", message="Validated by the selected Worker.")
         ],
         expires_at=recording.expires_at,
     )

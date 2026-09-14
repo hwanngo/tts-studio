@@ -39,12 +39,22 @@ class ProviderResponse(BaseModel):
 
 
 class ProviderApiError(PublicApiError):
-    def __init__(self, status_code: int, code: str, message: str, *, retryable: bool = False) -> None:
-        super().__init__(status_code=status_code, code=code, message=message, source="providers", retryable=retryable)
+    def __init__(
+        self, status_code: int, code: str, message: str, *, retryable: bool = False
+    ) -> None:
+        super().__init__(
+            status_code=status_code,
+            code=code,
+            message=message,
+            source="providers",
+            retryable=retryable,
+        )
 
 
 _ERRORS: dict[int | str, dict[str, Any]] = {
-    404: {"model": ErrorEnvelope}, 409: {"model": ErrorEnvelope}, 422: {"model": ErrorEnvelope}
+    404: {"model": ErrorEnvelope},
+    409: {"model": ErrorEnvelope},
+    422: {"model": ErrorEnvelope},
 }
 
 
@@ -67,15 +77,21 @@ async def get_provider(provider_id: str, request: Request) -> ProviderResponse:
     try:
         return _response(request.app.state.provider_registry.get(provider_id))
     except ProviderNotFoundError as error:
-        raise ProviderApiError(404, "provider_not_found", "The provider profile was not found.") from error
+        raise ProviderApiError(
+            404, "provider_not_found", "The provider profile was not found."
+        ) from error
 
 
 @router.patch("/{provider_id}", response_model=ProviderResponse, responses=_ERRORS)
-async def update_provider(provider_id: str, payload: ProviderRequest, request: Request) -> ProviderResponse:
+async def update_provider(
+    provider_id: str, payload: ProviderRequest, request: Request
+) -> ProviderResponse:
     try:
         profile = request.app.state.provider_registry.update(provider_id, **payload.model_dump())
     except ProviderNotFoundError as error:
-        raise ProviderApiError(404, "provider_not_found", "The provider profile was not found.") from error
+        raise ProviderApiError(
+            404, "provider_not_found", "The provider profile was not found."
+        ) from error
     except InvalidProviderProfileError as error:
         raise ProviderApiError(422, "provider_profile_invalid", str(error)) from error
     return _response(profile)
@@ -86,9 +102,16 @@ async def delete_provider(provider_id: str, request: Request) -> Response:
     try:
         request.app.state.provider_registry.delete(provider_id)
     except ProviderNotFoundError as error:
-        raise ProviderApiError(404, "provider_not_found", "The provider profile was not found.") from error
+        raise ProviderApiError(
+            404, "provider_not_found", "The provider profile was not found."
+        ) from error
     except ProviderInUseError as error:
-        raise ProviderApiError(409, "provider_in_use", "The provider profile is used by an active Generation Job.", retryable=True) from error
+        raise ProviderApiError(
+            409,
+            "provider_in_use",
+            "The provider profile is used by an active Generation Job.",
+            retryable=True,
+        ) from error
     return Response(status_code=HTTPStatus.NO_CONTENT)
 
 
@@ -97,11 +120,15 @@ async def validate_provider(provider_id: str, request: Request) -> ProviderRespo
     try:
         profile = request.app.state.provider_registry.get(provider_id)
     except ProviderNotFoundError as error:
-        raise ProviderApiError(404, "provider_not_found", "The provider profile was not found.") from error
+        raise ProviderApiError(
+            404, "provider_not_found", "The provider profile was not found."
+        ) from error
     try:
         ProviderService(request.app.state.provider_registry).resolve_api_key(profile)
     except ProviderSecretMissingError as error:
-        raise ProviderApiError(422, "provider_configuration_missing", "The provider credential is not configured.") from error
+        raise ProviderApiError(
+            422, "provider_configuration_missing", "The provider credential is not configured."
+        ) from error
     return _response(profile)
 
 

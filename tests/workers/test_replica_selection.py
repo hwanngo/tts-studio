@@ -11,11 +11,24 @@ from tts_studio.workers.supervisor import WorkerSupervisor
 
 def _model() -> ModelInstallation:
     return ModelInstallation(
-        id="model", repository_id="repo", requested_revision=None, resolved_commit="a" * 40,
-        engine_installation_id="fake@1", compatibility_evidence={"engine_id": "fake"},
-        runtime_variant="fp32", manifest={}, checksum_summary={}, byte_size=1,
-        cache_path="models/model", desired_load_state="unloaded", observed_load_state="unloaded",
-        replica_summary={}, last_error=None, created_at="now", updated_at="now", desired_replicas=2,
+        id="model",
+        repository_id="repo",
+        requested_revision=None,
+        resolved_commit="a" * 40,
+        engine_installation_id="fake@1",
+        compatibility_evidence={"engine_id": "fake"},
+        runtime_variant="fp32",
+        manifest={},
+        checksum_summary={},
+        byte_size=1,
+        cache_path="models/model",
+        desired_load_state="unloaded",
+        observed_load_state="unloaded",
+        replica_summary={},
+        last_error=None,
+        created_at="now",
+        updated_at="now",
+        desired_replicas=2,
     )
 
 

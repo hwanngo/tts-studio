@@ -41,6 +41,15 @@
     "switchToDark": "Chuyển sang chế độ tối",
     "label": "Giao diện"
   },
+  "authentication": {
+    "title": "Kết nối với Core",
+    "description": "Nhập bearer token đã cấu hình cho Core này. Token chỉ được giữ trong bộ nhớ của thẻ trình duyệt.",
+    "tokenLabel": "API token",
+    "tokenHint": "Token không bao giờ được lưu hoặc thêm vào URL.",
+    "connect": "Kết nối",
+    "connecting": "Đang kết nối…",
+    "failed": "Xác thực thất bại. Hãy kiểm tra token rồi thử lại."
+  },
   "a11y": {
     "skipToContent": "Chuyển đến nội dung chính",
     "primaryNavigation": "Điều hướng chính",
@@ -79,6 +88,7 @@
     "generationFailed": "Tạo giọng thất bại",
     "generationCancelled": "Đã hủy lượt tạo giọng",
     "generationRequestInvalid": "Yêu cầu tạo giọng không hợp lệ",
+    "hostNotAllowed": "Host của yêu cầu không được phép",
     "revisionNotFound": "Không tìm thấy bản sửa đổi được yêu cầu",
     "modelLoadFailed": "Không tải được mô hình",
     "modelUnloadFailed": "Không dỡ được mô hình",
@@ -93,6 +103,7 @@
     "modelVariantUnavailable": "Biến thể mô hình hiện không khả dụng",
     "internalError": "Đã xảy ra lỗi bên trong hệ thống",
     "notFound": "Không tìm thấy tài nguyên được yêu cầu",
+    "originNotAllowed": "Origin của yêu cầu không được phép",
     "providerConfigurationMissing": "Chưa có cấu hình nhà cung cấp",
     "providerInUse": "Nhà cung cấp hiện đang được sử dụng",
     "providerNotFound": "Không tìm thấy nhà cung cấp",
@@ -344,6 +355,8 @@
     "previewButton": "Nghe thử",
     "previewingButton": "Đang nghe thử…",
     "previewFailed": "Nghe thử giọng thất bại.",
+    "previewUnavailable": "Không thể nghe thử: Worker đã chọn không hỗ trợ giọng cài sẵn qua luồng.",
+    "capabilitiesChecking": "Đang kiểm tra khả năng của Worker đã chọn.",
     "voicesUnavailable": "Không có giọng khả dụng.",
     "voiceFallback": "giọng",
     "defaultSample": "Xin chào từ TTS Studio."
@@ -415,6 +428,10 @@
     "generationFailed": "Tạo giọng thất bại.",
     "generationStartFailed": "Không thể bắt đầu tạo giọng.",
     "generationCancelFailed": "Không thể hủy lượt tạo giọng.",
+    "generationUnavailable": "Không thể tạo giọng: Worker đã chọn không hỗ trợ tổng hợp qua luồng.",
+    "generationPresetUnavailable": "Không thể tạo giọng: Worker đã chọn không hỗ trợ giọng cài sẵn.",
+    "cancellationUnavailable": "Không thể hủy: Worker đã chọn không hỗ trợ hủy tổng hợp.",
+    "capabilitiesChecking": "Đang kiểm tra khả năng của Worker đã chọn.",
     "voiceDiscoveryFailed": "Không thể tìm giọng."
   },
   "historyPage": {

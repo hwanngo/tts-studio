@@ -194,9 +194,7 @@ async def test_openai_speech_maps_unsafe_artifact_to_stable_error(tmp_path: Path
         (GenerationCapabilityError("unsupported"), 503, "capability_unsupported"),
         (
             WorkerOperationError(
-                engine_pb2.WorkerError(
-                    code="provider_timeout", message="timeout", retryable=True
-                )
+                engine_pb2.WorkerError(code="provider_timeout", message="timeout", retryable=True)
             ),
             503,
             "provider_timeout",

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from tts_studio.storage.layout import UnsafeStoragePathError
 
-_LATEST_SCHEMA_VERSION = 12
+_LATEST_SCHEMA_VERSION = 13
 
 
 class UnsupportedDatabaseVersionError(RuntimeError):

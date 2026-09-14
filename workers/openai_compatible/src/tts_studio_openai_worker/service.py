@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+import grpc
 from tts_studio_protocol.engine.v1 import engine_pb2, engine_pb2_grpc
 from tts_studio_worker_sdk.auth import require_worker_token
 from tts_studio_worker_sdk.limits import MAX_SYNTHESIS_TEXT_CHARS
@@ -14,21 +15,31 @@ class OpenAICompatibleWorker(engine_pb2_grpc.EngineWorkerServicer):
         self._token = token
         self._provider_quarantined = False
 
-    async def Describe(self, request, context) -> engine_pb2.DescribeResponse:
+    async def Describe(
+        self,
+        request: engine_pb2.DescribeRequest,
+        context: grpc.aio.ServicerContext[engine_pb2.DescribeRequest, engine_pb2.DescribeResponse],
+    ) -> engine_pb2.DescribeResponse:
         await require_worker_token(context, self._token)
         return engine_pb2.DescribeResponse(
             protocol=engine_pb2.ProtocolVersion(major=1, minor=1),
-            engine_id="openai_compatible", engine_version="0.1.0",
+            engine_id="openai_compatible",
+            engine_version="0.1.0",
             capabilities=[
                 engine_pb2.Capability(name="health", supported=True),
                 engine_pb2.Capability(name="preset_voices", supported=True),
                 engine_pb2.Capability(name="streaming_synthesis", supported=True),
                 engine_pb2.Capability(name="synthesis_cancellation", supported=True),
                 engine_pb2.Capability(name="speed", supported=True),
-            ], max_concurrency=1,
+            ],
+            max_concurrency=1,
         )
 
-    async def Health(self, request, context) -> engine_pb2.HealthResponse:
+    async def Health(
+        self,
+        request: engine_pb2.HealthRequest,
+        context: grpc.aio.ServicerContext[engine_pb2.HealthRequest, engine_pb2.HealthResponse],
+    ) -> engine_pb2.HealthResponse:
         await require_worker_token(context, self._token)
         return engine_pb2.HealthResponse(
             status=(
@@ -38,22 +49,46 @@ class OpenAICompatibleWorker(engine_pb2_grpc.EngineWorkerServicer):
             )
         )
 
-    async def LoadModel(self, request, context) -> engine_pb2.LoadModelResponse:
+    async def LoadModel(
+        self,
+        request: engine_pb2.LoadModelRequest,
+        context: grpc.aio.ServicerContext[
+            engine_pb2.LoadModelRequest, engine_pb2.LoadModelResponse
+        ],
+    ) -> engine_pb2.LoadModelResponse:
         await require_worker_token(context, self._token)
         return engine_pb2.LoadModelResponse(loaded=True)
 
-    async def UnloadModel(self, request, context) -> engine_pb2.UnloadModelResponse:
+    async def UnloadModel(
+        self,
+        request: engine_pb2.UnloadModelRequest,
+        context: grpc.aio.ServicerContext[
+            engine_pb2.UnloadModelRequest, engine_pb2.UnloadModelResponse
+        ],
+    ) -> engine_pb2.UnloadModelResponse:
         await require_worker_token(context, self._token)
         return engine_pb2.UnloadModelResponse(unloaded=True)
 
-    async def ListVoices(self, request, context) -> engine_pb2.ListVoicesResponse:
+    async def ListVoices(
+        self,
+        request: engine_pb2.ListVoicesRequest,
+        context: grpc.aio.ServicerContext[
+            engine_pb2.ListVoicesRequest, engine_pb2.ListVoicesResponse
+        ],
+    ) -> engine_pb2.ListVoicesResponse:
         await require_worker_token(context, self._token)
-        return engine_pb2.ListVoicesResponse(voices=[
-            engine_pb2.PresetVoice(id=value, label=value.title())
-            for value in ("alloy", "echo", "fable", "onyx", "nova", "shimmer")
-        ])
+        return engine_pb2.ListVoicesResponse(
+            voices=[
+                engine_pb2.PresetVoice(id=value, label=value.title())
+                for value in ("alloy", "echo", "fable", "onyx", "nova", "shimmer")
+            ]
+        )
 
-    async def Synthesize(self, request, context) -> AsyncIterator[engine_pb2.SynthesisEvent]:
+    async def Synthesize(
+        self,
+        request: engine_pb2.SynthesizeRequest,
+        context: grpc.aio.ServicerContext[engine_pb2.SynthesizeRequest, engine_pb2.SynthesisEvent],
+    ) -> AsyncIterator[engine_pb2.SynthesisEvent]:
         await require_worker_token(context, self._token)
         if self._provider_quarantined:
             yield _error(
@@ -74,7 +109,11 @@ class OpenAICompatibleWorker(engine_pb2_grpc.EngineWorkerServicer):
                     yield _error("option_unsupported", f"The {field} option is unsupported.", False)
                     return
         if not request.HasField("provider") or not request.provider.api_key:
-            yield _error("provider_configuration_missing", "The provider credential is not configured.", False)
+            yield _error(
+                "provider_configuration_missing",
+                "The provider credential is not configured.",
+                False,
+            )
             return
         cancellation = ProviderCancellation()
         add_done_callback = getattr(context, "add_done_callback", None)
@@ -84,9 +123,16 @@ class OpenAICompatibleWorker(engine_pb2_grpc.EngineWorkerServicer):
             cancellation.cancel()
         try:
             audio = await synthesize(
-                base_url=request.provider.base_url, api_key=request.provider.api_key,
-                model=request.provider.model, text=request.text, voice=request.voice_id,
-                speed=(request.options.speed if request.HasField("options") and request.options.HasField("speed") else None),
+                base_url=request.provider.base_url,
+                api_key=request.provider.api_key,
+                model=request.provider.model,
+                text=request.text,
+                voice=request.voice_id,
+                speed=(
+                    request.options.speed
+                    if request.HasField("options") and request.options.HasField("speed")
+                    else None
+                ),
                 cancellation=cancellation,
             )
         except ProviderRequestError as error:
@@ -97,27 +143,86 @@ class OpenAICompatibleWorker(engine_pb2_grpc.EngineWorkerServicer):
         finally:
             if cancellation.quarantined():
                 self._provider_quarantined = True
-        yield engine_pb2.SynthesisEvent(header=engine_pb2.AudioHeader(
-            sample_rate_hz=audio.sample_rate_hz, channels=1, sample_format=engine_pb2.S16LE,
-        ))
+        yield engine_pb2.SynthesisEvent(
+            header=engine_pb2.AudioHeader(
+                sample_rate_hz=audio.sample_rate_hz,
+                channels=1,
+                sample_format=engine_pb2.S16LE,
+            )
+        )
         for sequence, offset in enumerate(range(0, len(audio.pcm), 1920)):
             if context.cancelled():
                 return
-            yield engine_pb2.SynthesisEvent(chunk=engine_pb2.PcmChunk(sequence=sequence, pcm=audio.pcm[offset:offset + 1920]))
-        yield engine_pb2.SynthesisEvent(result=engine_pb2.SynthesisResult(total_frames=audio.frames, duration_ms=audio.frames * 1000 // 48000))
+            yield engine_pb2.SynthesisEvent(
+                chunk=engine_pb2.PcmChunk(sequence=sequence, pcm=audio.pcm[offset : offset + 1920])
+            )
+        yield engine_pb2.SynthesisEvent(
+            result=engine_pb2.SynthesisResult(
+                total_frames=audio.frames, duration_ms=audio.frames * 1000 // 48000
+            )
+        )
 
-    async def ValidateModel(self, request, context):
+    async def ValidateModel(
+        self,
+        request: engine_pb2.ValidateModelRequest,
+        context: grpc.aio.ServicerContext[
+            engine_pb2.ValidateModelRequest, engine_pb2.ValidateModelResponse
+        ],
+    ) -> engine_pb2.ValidateModelResponse:
         await require_worker_token(context, self._token)
-        return engine_pb2.ValidateModelResponse(compatible=False, engine_id="openai_compatible", engine_version="0.1.0")
+        return engine_pb2.ValidateModelResponse(
+            compatible=False, engine_id="openai_compatible", engine_version="0.1.0"
+        )
 
-    async def ValidateReference(self, request, context):
+    async def ValidateReference(
+        self,
+        request: engine_pb2.ValidateReferenceRequest,
+        context: grpc.aio.ServicerContext[
+            engine_pb2.ValidateReferenceRequest, engine_pb2.ValidateReferenceResponse
+        ],
+    ) -> engine_pb2.ValidateReferenceResponse:
         await require_worker_token(context, self._token)
-        return engine_pb2.ValidateReferenceResponse(valid=False, error=engine_pb2.WorkerError(code="reference_unsupported", message="Reference cloning is not supported.", retryable=False))
+        return engine_pb2.ValidateReferenceResponse(
+            valid=False,
+            error=engine_pb2.WorkerError(
+                code="reference_unsupported",
+                message="Reference cloning is not supported.",
+                retryable=False,
+            ),
+        )
 
-    async def DownloadModel(self, request, context):
+    async def Align(
+        self,
+        request: engine_pb2.AlignRequest,
+        context: grpc.aio.ServicerContext[engine_pb2.AlignRequest, engine_pb2.AlignResponse],
+    ) -> engine_pb2.AlignResponse:
         await require_worker_token(context, self._token)
-        yield engine_pb2.DownloadModelEvent(error=engine_pb2.WorkerError(code="model_download_unsupported", message="Remote providers do not download models.", retryable=False))
+        return engine_pb2.AlignResponse(
+            error=engine_pb2.WorkerError(
+                code="alignment_unavailable",
+                message="Provider alignment is unavailable.",
+                retryable=False,
+            )
+        )
+
+    async def DownloadModel(
+        self,
+        request: engine_pb2.DownloadModelRequest,
+        context: grpc.aio.ServicerContext[
+            engine_pb2.DownloadModelRequest, engine_pb2.DownloadModelEvent
+        ],
+    ) -> AsyncIterator[engine_pb2.DownloadModelEvent]:
+        await require_worker_token(context, self._token)
+        yield engine_pb2.DownloadModelEvent(
+            error=engine_pb2.WorkerError(
+                code="model_download_unsupported",
+                message="Remote providers do not download models.",
+                retryable=False,
+            )
+        )
 
 
 def _error(code: str, message: str, retryable: bool) -> engine_pb2.SynthesisEvent:
-    return engine_pb2.SynthesisEvent(error=engine_pb2.WorkerError(code=code, message=message, retryable=retryable))
+    return engine_pb2.SynthesisEvent(
+        error=engine_pb2.WorkerError(code=code, message=message, retryable=retryable)
+    )

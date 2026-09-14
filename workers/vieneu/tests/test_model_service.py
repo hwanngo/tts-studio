@@ -108,7 +108,9 @@ class FakeRepository:
         ]
 
     def snapshot_download(self, repo_id: str, revision: str, destination: Path, allow_patterns):
-        self.calls.append(("snapshot_download", (repo_id, revision, destination, tuple(allow_patterns))))
+        self.calls.append(
+            ("snapshot_download", (repo_id, revision, destination, tuple(allow_patterns)))
+        )
         destination.mkdir(parents=True, exist_ok=True)
         for pattern in allow_patterns:
             content = self.files[(repo_id, revision)].get(pattern)
@@ -123,33 +125,47 @@ def repository() -> FakeRepository:
     files: dict[tuple[str, str], bytes] = {}
     model_files: dict[str, bytes] = {}
     for variant, names in VARIANT_FILES.items():
-        model_files.update({
-            f"onnx_{variant if variant == 'int8' else 'update'}/{name}": f"{variant}:{name}".encode()
-            for name in names
-        })
-    model_files.update({name: f"root:{name}".encode() for name in ("denoiser.onnx", "speaker_encoder.onnx")})
+        model_files.update(
+            {
+                f"onnx_{variant if variant == 'int8' else 'update'}/{name}": f"{variant}:{name}".encode()
+                for name in names
+            }
+        )
+    model_files.update(
+        {name: f"root:{name}".encode() for name in ("denoiser.onnx", "speaker_encoder.onnx")}
+    )
     files[(TARGET_REPOSITORY, MODEL_COMMIT)] = model_files
-    files[(CODEC_REPOSITORY, CODEC_REVISION)] = {name: f"codec:{name}".encode() for name in CODEC_FILES}
+    files[(CODEC_REPOSITORY, CODEC_REVISION)] = {
+        name: f"codec:{name}".encode() for name in CODEC_FILES
+    }
     return FakeRepository(files)
 
 
-def test_validation_resolves_default_and_requested_immutable_revision_for_both_variants(tmp_path: Path) -> None:
+def test_validation_resolves_default_and_requested_immutable_revision_for_both_variants(
+    tmp_path: Path,
+) -> None:
     client = repository()
     service = VieNeuModelService(client, tmp_path)
 
     default = service.validate(engine_pb2.ValidateModelRequest(repository_id=TARGET_REPOSITORY))
     requested = service.validate(
-        engine_pb2.ValidateModelRequest(repository_id=TARGET_REPOSITORY, requested_revision=MODEL_COMMIT)
+        engine_pb2.ValidateModelRequest(
+            repository_id=TARGET_REPOSITORY, requested_revision=MODEL_COMMIT
+        )
     )
 
     assert default.compatible and default.resolved_commit == MODEL_COMMIT
     assert requested.compatible and requested.resolved_commit == MODEL_COMMIT
-    assert default.estimated_bytes == sum(len(content) for content in client.files[(TARGET_REPOSITORY, MODEL_COMMIT)].values()) + sum(
-        len(content) for content in client.files[(CODEC_REPOSITORY, CODEC_REVISION)].values()
-    )
+    assert default.estimated_bytes == sum(
+        len(content) for content in client.files[(TARGET_REPOSITORY, MODEL_COMMIT)].values()
+    ) + sum(len(content) for content in client.files[(CODEC_REPOSITORY, CODEC_REVISION)].values())
     assert {variant.id for variant in default.available_variants} == {"int8", "fp32"}
     assert set(default.required_files) == {
-        *(f"backbone/{variant}/{name}" for variant in ("int8", "fp32") for name in VARIANT_FILES[variant]),
+        *(
+            f"backbone/{variant}/{name}"
+            for variant in ("int8", "fp32")
+            for name in VARIANT_FILES[variant]
+        ),
         "cloning/denoiser.onnx",
         "cloning/speaker_encoder.onnx",
         *(f"codec/{name}" for name in CODEC_FILES),
@@ -163,9 +179,13 @@ def test_validation_resolves_default_and_requested_immutable_revision_for_both_v
     assert all(call[0] != "snapshot_download" for call in client.calls)
 
 
-def test_validation_rejects_explicit_commit_that_resolves_to_a_different_sha(tmp_path: Path) -> None:
+def test_validation_rejects_explicit_commit_that_resolves_to_a_different_sha(
+    tmp_path: Path,
+) -> None:
     response = VieNeuModelService(repository(), tmp_path).validate(
-        engine_pb2.ValidateModelRequest(repository_id=TARGET_REPOSITORY, requested_revision="b" * 40)
+        engine_pb2.ValidateModelRequest(
+            repository_id=TARGET_REPOSITORY, requested_revision="b" * 40
+        )
     )
 
     assert not response.compatible
@@ -206,7 +226,9 @@ def test_validation_preserves_repository_error_classification(
     assert response.error.retryable is retryable
 
 
-def test_validation_rejects_unknown_repository_and_missing_variant_or_codec_files(tmp_path: Path) -> None:
+def test_validation_rejects_unknown_repository_and_missing_variant_or_codec_files(
+    tmp_path: Path,
+) -> None:
     client = repository()
     service = VieNeuModelService(client, tmp_path)
 
@@ -224,7 +246,9 @@ def test_validation_rejects_unknown_repository_and_missing_variant_or_codec_file
 
 
 @pytest.mark.parametrize("invalid_sha", ["main", "model-commit", "A" * 40, "a" * 39, "a" * 65])
-def test_validation_rejects_non_immutable_repository_revision(tmp_path: Path, invalid_sha: str) -> None:
+def test_validation_rejects_non_immutable_repository_revision(
+    tmp_path: Path, invalid_sha: str
+) -> None:
     client = repository()
     client.sha = invalid_sha
 
@@ -313,7 +337,11 @@ async def test_download_stages_complete_manifest_with_ordered_progress_and_pinne
     assert progress[-1].phase == engine_pb2.DOWNLOAD_PHASE_FINALIZING
     manifest = events[-1].manifest
     expected = {
-        *(f"backbone/{variant}/{name}" for variant in ("int8", "fp32") for name in VARIANT_FILES[variant]),
+        *(
+            f"backbone/{variant}/{name}"
+            for variant in ("int8", "fp32")
+            for name in VARIANT_FILES[variant]
+        ),
         "cloning/denoiser.onnx",
         "cloning/speaker_encoder.onnx",
         *(f"codec/{name}" for name in CODEC_FILES),
@@ -325,11 +353,24 @@ async def test_download_stages_complete_manifest_with_ordered_progress_and_pinne
     assert activation_required_files == manifest_paths
     assert activation_required_files.issubset(manifest_paths)
     assert manifest.byte_size == sum(item.byte_size for item in manifest.files)
-    assert all("/" not in item.relative_path[:0] and not Path(item.relative_path).is_absolute() for item in manifest.files)
+    assert all(
+        "/" not in item.relative_path[:0] and not Path(item.relative_path).is_absolute()
+        for item in manifest.files
+    )
     assert (tmp_path / "staging" / "job-1" / "backbone/int8/config.json").is_file()
-    codec_call = next(call for call in client.calls if call[0] == "snapshot_download" and call[1][0] == CODEC_REPOSITORY)
+    codec_call = next(
+        call
+        for call in client.calls
+        if call[0] == "snapshot_download" and call[1][0] == CODEC_REPOSITORY
+    )
     assert codec_call[1][1] == CODEC_REVISION
-    assert all(item.sha256 == hashlib.sha256((tmp_path / "staging" / "job-1" / item.relative_path).read_bytes()).hexdigest() for item in manifest.files)
+    assert all(
+        item.sha256
+        == hashlib.sha256(
+            (tmp_path / "staging" / "job-1" / item.relative_path).read_bytes()
+        ).hexdigest()
+        for item in manifest.files
+    )
 
 
 @pytest.mark.asyncio
@@ -364,7 +405,9 @@ async def test_download_preserves_repository_error_classification(
         staging_destination="repository-failure",
     )
 
-    events = [event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())]
+    events = [
+        event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())
+    ]
 
     assert events[-1].error.code == code
     assert events[-1].error.retryable is retryable
@@ -399,7 +442,9 @@ async def test_download_fails_closed_when_staging_root_is_replaced_after_snapsho
         staging_destination="replaced-root",
     )
 
-    events = [event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())]
+    events = [
+        event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())
+    ]
 
     assert events[-1].error.code == "download_failed"
     assert not any(path.is_file() for path in outside.rglob("*"))
@@ -443,8 +488,7 @@ async def test_download_does_not_write_outside_when_root_is_replaced_during_seco
     )
 
     events = [
-        event
-        async for event in VieNeuModelService(client, tmp_path).download(request, _Context())
+        event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())
     ]
 
     assert events[-1].error.code == "download_failed"
@@ -487,7 +531,9 @@ async def test_download_does_not_write_outside_when_scratch_workdir_is_replaced_
         staging_destination="scratch-workdir-race",
     )
 
-    events = [event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())]
+    events = [
+        event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())
+    ]
 
     assert events[-1].error.code == "download_failed"
     assert sentinel.read_bytes() == b"outside sentinel"
@@ -527,7 +573,9 @@ async def test_download_does_not_write_outside_when_scratch_root_is_replaced_dur
         staging_destination="scratch-root-race",
     )
 
-    events = [event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())]
+    events = [
+        event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())
+    ]
 
     assert events[-1].error.code == "download_failed"
     assert sentinel is not None
@@ -562,7 +610,9 @@ async def test_snapshot_destinations_cannot_redirect_an_actual_sdk_write_outside
         staging_destination="sdk-destination-race",
     )
 
-    events = [event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())]
+    events = [
+        event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())
+    ]
 
     assert events[-1].HasField("manifest")
     assert sentinel.read_bytes() == b"outside sentinel"
@@ -574,7 +624,10 @@ async def test_download_rejects_unsafe_staging_and_honors_cancellation(tmp_path:
     client = repository()
     service = VieNeuModelService(client, tmp_path)
     unsafe = engine_pb2.DownloadModelRequest(
-        repository_id=TARGET_REPOSITORY, resolved_commit=MODEL_COMMIT, variant="fp32", staging_destination="../escape"
+        repository_id=TARGET_REPOSITORY,
+        resolved_commit=MODEL_COMMIT,
+        variant="fp32",
+        staging_destination="../escape",
     )
     events = [event async for event in service.download(unsafe, _Context())]
     assert events[0].error.code == "invalid_request"
@@ -611,7 +664,9 @@ async def test_download_handles_non_immutable_repository_revision_safely(tmp_pat
         staging_destination="invalid-revision",
     )
 
-    events = [event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())]
+    events = [
+        event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())
+    ]
 
     assert events[-1].error.code == "download_failed"
     assert not events[-1].error.retryable
@@ -720,7 +775,9 @@ async def test_cancellation_does_not_remove_replaced_current_job_directory(
         staging_destination="replaced-root",
     )
 
-    events = [event async for event in VieNeuModelService(client, tmp_path).download(request, context)]
+    events = [
+        event async for event in VieNeuModelService(client, tmp_path).download(request, context)
+    ]
 
     assert events[-1].error.code == "download_cancelled"
     assert protected.read_bytes() == b"replacement must survive"
@@ -757,7 +814,9 @@ async def test_cancellation_does_not_follow_replaced_current_job_symlink(
         staging_destination="replaced-symlink-root",
     )
 
-    events = [event async for event in VieNeuModelService(client, tmp_path).download(request, context)]
+    events = [
+        event async for event in VieNeuModelService(client, tmp_path).download(request, context)
+    ]
 
     assert events[-1].error.code == "download_cancelled"
     assert replacement_target.read_bytes() == b"symlink replacement must survive"
@@ -863,7 +922,9 @@ async def test_failed_download_preserves_preexisting_staging_content(tmp_path: P
         staging_destination="retry-transfer",
     )
 
-    events = [event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())]
+    events = [
+        event async for event in VieNeuModelService(client, tmp_path).download(request, _Context())
+    ]
 
     assert events[-1].error.code == "download_failed"
     assert events[-1].error.retryable
@@ -905,7 +966,9 @@ async def test_cancellation_cleanup_does_not_follow_replaced_staging_parent(
         staging_destination="redirected-cleanup",
     )
 
-    events = [event async for event in VieNeuModelService(client, tmp_path).download(request, context)]
+    events = [
+        event async for event in VieNeuModelService(client, tmp_path).download(request, context)
+    ]
 
     assert events[-1].error.code == "download_cancelled"
     assert protected.read_bytes() == b"protected"

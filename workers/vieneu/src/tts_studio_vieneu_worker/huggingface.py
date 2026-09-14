@@ -29,7 +29,9 @@ class HuggingFaceRepositoryClient:
         return self._api.model_info(repo_id, revision=revision)
 
     def list_files(self, repo_id: str, revision: str) -> Sequence[object]:
-        return self._api.list_repo_tree(repo_id, revision=revision, recursive=True, expand=False)
+        return tuple(
+            self._api.list_repo_tree(repo_id, revision=revision, recursive=True, expand=False)
+        )
 
     def snapshot_download(
         self, repo_id: str, revision: str, destination: Path, allow_patterns: Sequence[str]

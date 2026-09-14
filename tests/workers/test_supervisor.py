@@ -58,6 +58,31 @@ def test_worker_protocol_minor_compatibility_is_explicit() -> None:
     assert not supervisor_module._protocol_compatible(engine_pb2.ProtocolVersion(major=1, minor=2))
     assert not supervisor_module._protocol_compatible(engine_pb2.ProtocolVersion(major=2, minor=0))
 
+
+def test_pending_owner_lookup_requests_untruncated_process_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner_claim = "pending-owner-claim"
+    command_prefix = "/home/runner/work/tts-studio/tts-studio/.venv/bin/python"
+    process_prefix = "4242 4242 Ss Mon Sep 14 12:00:00 2026 "
+
+    monkeypatch.setattr(supervisor_module.shutil, "which", lambda name: "/usr/bin/ps")
+    monkeypatch.setattr(supervisor_module.sys, "platform", "linux")
+
+    def process_table(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        command = f"{command_prefix} -c 'import time; time.sleep(60)'"
+        if "-ww" in arguments:
+            command = f"{command} --owner-claim {owner_claim}"
+        return subprocess.CompletedProcess(arguments, 0, stdout=f"{process_prefix}{command}\n")
+
+    monkeypatch.setattr(supervisor_module.subprocess, "run", process_table)
+
+    matches = supervisor_module._pending_owner_processes({"owner_claim": owner_claim})
+
+    assert matches is not None
+    assert [process.pid for process in matches] == [4242]
+
+
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _FAKE_WORKER_LAUNCH = WorkerLaunchSpec(
     command=(
@@ -247,7 +272,9 @@ async def test_describe_refresh_rejects_contradictory_alignment_metadata(tmp_pat
                 ),
             )
 
-    worker = cast(WorkerProcess, SimpleNamespace(stub=RefreshStub(), token="secret", engine_id="fake"))
+    worker = cast(
+        WorkerProcess, SimpleNamespace(stub=RefreshStub(), token="secret", engine_id="fake")
+    )
     supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=1)
     supervisor._workers["fake"] = worker
 
@@ -485,16 +512,12 @@ def test_owner_finalization_failure_preserves_parseable_pending_record(
     owner = layout.run / "worker-atomic.owner"
     ready = layout.run / "worker-atomic.json"
     token = layout.run / "worker-atomic.token"
-    supervisor_module._write_owner_record(
-        owner, None, None, "owner-claim", ready, token
-    )
+    supervisor_module._write_owner_record(owner, None, None, "owner-claim", ready, token)
     pending = json.loads(owner.read_text(encoding="utf-8"))
     monkeypatch.setattr(
         supervisor_module,
         "_process_identity",
-        lambda pid: SimpleNamespace(
-            process_group=pid, start_time="start", command_sha256="hash"
-        ),
+        lambda pid: SimpleNamespace(process_group=pid, start_time="start", command_sha256="hash"),
         raising=False,
     )
 
@@ -507,9 +530,7 @@ def test_owner_finalization_failure_preserves_parseable_pending_record(
     monkeypatch.setattr(supervisor_module, "_write_owner_document", partial_write)
 
     with pytest.raises(OSError, match="finalization crash"):
-        supervisor_module._finalize_owner_record(
-            owner, os.getpid(), "owner-claim", ready, token
-        )
+        supervisor_module._finalize_owner_record(owner, os.getpid(), "owner-claim", ready, token)
 
     assert json.loads(owner.read_text(encoding="utf-8")) == pending
 
@@ -596,15 +617,14 @@ async def test_launch_uses_a_restricted_consumed_token_file_and_explicit_process
             assert worker.owner_file is not None
             assert pending_owner["pid"] is None
             assert pending_owner["process_group"] is None
-            assert pending_owner["owner_claim"] == arguments[
-                arguments.index("--owner-claim") + 1
-            ]
+            assert pending_owner["owner_claim"] == arguments[arguments.index("--owner-claim") + 1]
         assert token_file.parent == layout.run
         assert not token_file.exists()
         assert sentinel_name not in environment
-        assert environment[supervisor_module._OWNER_CLAIM_ENV] == arguments[
-            arguments.index("--owner-claim") + 1
-        ]
+        assert (
+            environment[supervisor_module._OWNER_CLAIM_ENV]
+            == arguments[arguments.index("--owner-claim") + 1]
+        )
         assert Path(captured["cwd"]) == launch_cwd.resolve()
         child_process = json.loads(probe_file.read_text(encoding="utf-8"))
         assert child_process == {"cwd": str(launch_cwd.resolve()), "sentinel": None}
@@ -836,7 +856,15 @@ async def test_missing_worker_health_is_not_ready(tmp_path: Path) -> None:
 async def test_noncanonical_replica_crash_is_visible_and_restarted(tmp_path: Path) -> None:
     supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
     launch = WorkerLaunchSpec(
-        command=(sys.executable, "-c", _PROTOCOL_WORKER, "--reported-engine-id", "fake", "--protocol-major", "1"),
+        command=(
+            sys.executable,
+            "-c",
+            _PROTOCOL_WORKER,
+            "--reported-engine-id",
+            "fake",
+            "--protocol-major",
+            "1",
+        ),
         cwd=_REPOSITORY_ROOT,
     )
     try:
@@ -930,8 +958,7 @@ async def test_crash_replacement_exhausts_three_consecutive_launch_attempts(
     try:
         await asyncio.wait_for(
             _wait_until(
-                lambda: supervisor.startup_diagnostics().get("fake", {}).get("status")
-                == "failed"
+                lambda: supervisor.startup_diagnostics().get("fake", {}).get("status") == "failed"
             ),
             timeout=5,
         )
@@ -1018,7 +1045,9 @@ async def test_startup_reconciliation_terminates_pending_owner_spawn_window(
 
     try:
         await WorkerSupervisor(layout, startup_timeout=1)._reconcile_orphans()
-        await asyncio.wait_for(asyncio.to_thread(process.wait), timeout=2)
+        # The reconciliation contract is that the orphan has exited. Polling
+        # avoids depending on an unrelated default-executor worker to reap it.
+        await asyncio.wait_for(_wait_until(lambda: process.poll() is not None), timeout=5)
         assert process.returncode is not None
         assert not owner.exists()
         assert not ready.exists()
@@ -1059,11 +1088,7 @@ async def test_orphan_termination_revalidates_identity_immediately_before_signal
     )
     changed = supervisor_module._GroupSnapshot(
         4242,
-        (
-            supervisor_module._ProcessIdentity(
-                4242, 4242, "S", "start-two", "unrelated process"
-            ),
-        ),
+        (supervisor_module._ProcessIdentity(4242, 4242, "S", "start-two", "unrelated process"),),
     )
     snapshots = iter((expected, changed))
     signals: list[tuple[int, int]] = []
@@ -1124,7 +1149,9 @@ async def test_startup_reconciliation_never_terminates_unrelated_live_pid(
 
 
 @pytest.mark.asyncio
-async def test_replica_start_failure_is_recorded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_replica_start_failure_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=1)
     supervisor._launches["fake"] = _FAKE_WORKER_LAUNCH
 
@@ -1133,7 +1160,9 @@ async def test_replica_start_failure_is_recorded(tmp_path: Path, monkeypatch: py
         raise RuntimeError("adapter token=secret at /private/model")
 
     monkeypatch.setattr(supervisor, "_start_locked", fail_start)
-    model = SimpleNamespace(compatibility_evidence={"engine_id": "fake"}, engine_installation_id="fake@revision")
+    model = SimpleNamespace(
+        compatibility_evidence={"engine_id": "fake"}, engine_installation_id="fake@revision"
+    )
 
     with pytest.raises(RuntimeError, match="adapter"):
         await supervisor.ensure_replicas(model, 2)
@@ -1349,6 +1378,186 @@ async def test_stop_reaps_worker_when_channel_close_raises(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_hard_stop_recognizes_reaping_after_watcher_close_is_cancelled(
+    tmp_path: Path,
+) -> None:
+    supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
+    original = await supervisor.start("fake", _FAKE_WORKER_LAUNCH)
+    real_channel = original.channel
+    close_entered = asyncio.Event()
+
+    class CancelledCloseChannel:
+        first_close = True
+
+        async def close(self) -> None:
+            if self.first_close:
+                self.first_close = False
+                close_entered.set()
+                await asyncio.Event().wait()
+            await real_channel.close()
+
+    original.channel = CancelledCloseChannel()  # type: ignore[assignment]
+    original.process.kill()
+    try:
+        await asyncio.wait_for(close_entered.wait(), 2)
+        await asyncio.wait_for(supervisor.hard_stop(original), 5)
+        assert original.terminated
+        assert original.owner_file is None or not original.owner_file.exists()
+        async with asyncio.timeout(5):
+            while not (status := await supervisor.health("fake")).ready:
+                await asyncio.sleep(0.01)
+        assert status.pid != original.process.pid
+        assert supervisor.startup_diagnostics()["fake"]["status"] == "ready"
+    finally:
+        original.channel = real_channel
+        await real_channel.close()
+        # The RED implementation can lose the owner file despite a verified exit.
+        if (
+            original.process.returncode is not None
+            and original.owner_file is not None
+            and not original.owner_file.exists()
+        ):
+            original.owner_file = None
+        await supervisor.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_hard_stop_completion_cannot_replace_new_worker_watcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
+    original = await supervisor.start("fake", _FAKE_WORKER_LAUNCH)
+    terminate = supervisor_module._terminate_and_reap
+    first_entered, second_entered, release_first, release_second = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+    calls = 0
+
+    async def controlled_termination(process, owner_file=None, *, force=False):
+        nonlocal calls
+        if process is original.process and force:
+            calls += 1
+            if calls == 1:
+                first_entered.set()
+                await release_first.wait()
+                await terminate(process, owner_file, force=True)
+            else:
+                second_entered.set()
+                await release_second.wait()
+            return
+        await terminate(process, owner_file, force=force)
+
+    monkeypatch.setattr(supervisor_module, "_terminate_and_reap", controlled_termination)
+    first = asyncio.create_task(supervisor.hard_stop(original))
+    await asyncio.wait_for(first_entered.wait(), 2)
+    second = asyncio.create_task(supervisor.hard_stop(original))
+    try:
+        # Give the second caller a deterministic chance to reach the delayed
+        # termination seam; the correct implementation shares the first task.
+        await asyncio.sleep(0.02)
+        release_first.set()
+        await asyncio.wait_for(first, 5)
+        async with asyncio.timeout(5):
+            while not (status := await supervisor.health("fake")).ready:
+                await asyncio.sleep(0.01)
+        assert status.pid != original.process.pid
+        replacement_watcher = supervisor._watch_tasks[("fake", 0)]
+        release_second.set()
+        await asyncio.wait_for(second, 5)
+        assert supervisor._watch_tasks[("fake", 0)] is replacement_watcher
+        assert not replacement_watcher.done()
+        assert not second_entered.is_set(), "concurrent callers must share one termination"
+    finally:
+        release_first.set()
+        release_second.set()
+        await asyncio.gather(first, second, return_exceptions=True)
+        monkeypatch.setattr(supervisor_module, "_terminate_and_reap", terminate)
+        await supervisor.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_repeated_hard_stop_cannot_quarantine_a_replacement(tmp_path: Path) -> None:
+    supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
+    original = await supervisor.start("fake", _FAKE_WORKER_LAUNCH)
+    try:
+        await supervisor.hard_stop(original)
+        async with asyncio.timeout(5):
+            while not (status := await supervisor.health("fake")).ready:
+                await asyncio.sleep(0.01)
+        assert status.pid != original.process.pid
+        await supervisor.hard_stop(original)
+        assert (await supervisor.health("fake")).ready
+    finally:
+        await supervisor.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_planned_stop_retains_ownership_during_failure_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
+    worker = await supervisor.start("fake", _FAKE_WORKER_LAUNCH)
+    entered = asyncio.Event()
+    cleanup = supervisor_module._cleanup_resources
+
+    async def delayed_cleanup(*args, **kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(supervisor_module, "_cleanup_resources", delayed_cleanup)
+    worker.process.kill()
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await supervisor.stop_all()
+        assert not worker.ready_file.exists(), "shutdown must own replicas still being cleaned"
+        assert worker.owner_file is None or not worker.owner_file.exists()
+    finally:
+        if worker.ready_file.exists():
+            await cleanup(
+                supervisor._layout,
+                worker.channel,
+                worker.process,
+                worker.ready_file,
+                worker.token_file,
+                worker.owner_file,
+            )
+
+
+@pytest.mark.asyncio
+async def test_failed_hard_stop_keeps_quarantine_and_can_be_retried(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervisor = WorkerSupervisor(StorageLayout.from_root(tmp_path), startup_timeout=10)
+    worker = await supervisor.start("fake", _FAKE_WORKER_LAUNCH)
+    terminate = supervisor_module._terminate_and_reap
+
+    async def denied(*args, **kwargs):
+        raise OSError("signal denied")
+
+    monkeypatch.setattr(supervisor_module, "_terminate_and_reap", denied)
+    try:
+        with pytest.raises(OSError, match="signal denied"):
+            await supervisor.hard_stop(worker)
+        assert (await supervisor.health("fake")).ready is False
+        assert worker.process.returncode is None
+        assert worker in supervisor._replica_values()
+        with pytest.raises(OSError, match="signal denied"):
+            await supervisor.stop_all()
+        assert worker in supervisor._replica_values(), "failed reaping must retain ownership"
+    finally:
+        monkeypatch.setattr(supervisor_module, "_terminate_and_reap", terminate)
+        # The direct fallback makes this RED test safe even with the ownership bug.
+        await terminate(worker.process, worker.owner_file, force=True)
+        await supervisor.stop_all()
+
+
+@pytest.mark.asyncio
 async def test_startup_cleanup_reaps_after_kill_process_lookup_race(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1386,9 +1595,7 @@ async def test_startup_cleanup_reaps_after_kill_process_lookup_race(
     monkeypatch.setattr(
         supervisor_module,
         "_process_identity",
-        lambda pid: supervisor_module._ProcessIdentity(
-            pid, pid, "", "start", "worker"
-        ),
+        lambda pid: supervisor_module._ProcessIdentity(pid, pid, "", "start", "worker"),
     )
     record = {
         "pid": process.pid,
@@ -1399,11 +1606,7 @@ async def test_startup_cleanup_reaps_after_kill_process_lookup_race(
     }
     snapshot = supervisor_module._GroupSnapshot(
         process.pid,
-        (
-            supervisor_module._ProcessIdentity(
-                process.pid, process.pid, "", "start", "worker"
-            ),
-        ),
+        (supervisor_module._ProcessIdentity(process.pid, process.pid, "", "start", "worker"),),
     )
     empty_snapshot = supervisor_module._GroupSnapshot(process.pid, ())
     snapshots = iter((snapshot, empty_snapshot))

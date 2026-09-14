@@ -22,7 +22,9 @@ def definition(tmp_path: Path) -> ServiceDefinition:
     )
 
 
-def test_launchd_renderer_uses_escaped_arguments_and_public_lifecycle(definition: ServiceDefinition) -> None:
+def test_launchd_renderer_uses_escaped_arguments_and_public_lifecycle(
+    definition: ServiceDefinition,
+) -> None:
     rendered = render_launchd(definition)
 
     assert "<key>ProgramArguments</key>" in rendered
@@ -45,7 +47,9 @@ def test_systemd_renderer_contains_start_and_stop_commands(definition: ServiceDe
     assert "[Service]" in rendered
 
 
-def test_windows_renderer_returns_xml_and_schtasks_definition(definition: ServiceDefinition) -> None:
+def test_windows_renderer_returns_xml_and_schtasks_definition(
+    definition: ServiceDefinition,
+) -> None:
     rendered = render_windows_task(definition)
 
     assert "<Task" in rendered.xml

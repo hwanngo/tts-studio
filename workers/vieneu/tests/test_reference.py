@@ -24,7 +24,9 @@ def test_validate_returns_metadata_for_valid_wav(tmp_path: Path) -> None:
     path.parent.mkdir(parents=True)
     write_wav(path, channels=2)
 
-    metadata = VieNeuReferenceValidator(root).validate("model-1", "staging/references/ref.wav", "hello")
+    metadata = VieNeuReferenceValidator(root).validate(
+        "model-1", "staging/references/ref.wav", "hello"
+    )
 
     assert metadata.sample_rate_hz == 16000
     assert metadata.channels == 2
@@ -38,7 +40,9 @@ def test_validate_returns_metadata_for_valid_flac(tmp_path: Path) -> None:
     path.parent.mkdir(parents=True)
     sf.write(path, np.zeros((1600, 1), dtype=np.float32), 16000, format="FLAC")
 
-    metadata = VieNeuReferenceValidator(tmp_path).validate("model-1", "staging/references/ref.flac", None)
+    metadata = VieNeuReferenceValidator(tmp_path).validate(
+        "model-1", "staging/references/ref.flac", None
+    )
 
     assert metadata.sample_rate_hz == 16000
     assert metadata.channels == 1
@@ -48,8 +52,12 @@ def test_validate_returns_metadata_for_valid_flac(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("samples", "channels"),
-    [(np.array([], dtype=np.float32), 1), (np.array([[np.nan]], dtype=np.float32), 1),
-     (np.array([[np.inf]], dtype=np.float32), 1), (np.zeros((1600, 3), dtype=np.float32), 3)],
+    [
+        (np.array([], dtype=np.float32), 1),
+        (np.array([[np.nan]], dtype=np.float32), 1),
+        (np.array([[np.inf]], dtype=np.float32), 1),
+        (np.zeros((1600, 3), dtype=np.float32), 3),
+    ],
 )
 def test_validate_rejects_non_finite_empty_or_unsupported_audio(
     tmp_path: Path, samples: np.ndarray, channels: int
@@ -66,7 +74,12 @@ def test_validate_rejects_non_finite_empty_or_unsupported_audio(
 
 @pytest.mark.parametrize(
     "reference_path",
-    ["../outside.wav", "staging\\references\\ref.wav", "/tmp/ref.wav", "staging/references/missing.wav"],
+    [
+        "../outside.wav",
+        "staging\\references\\ref.wav",
+        "/tmp/ref.wav",
+        "staging/references/missing.wav",
+    ],
 )
 def test_validate_rejects_unsafe_or_missing_paths(tmp_path: Path, reference_path: str) -> None:
     with pytest.raises(ReferenceValidationError) as error:
@@ -101,7 +114,10 @@ def test_validate_keeps_original_directory_handle_when_component_is_swapped(
 
     def swap_before_final_open(path, *args, **kwargs):
         nonlocal swapped
-        if not swapped and __import__("os").path.basename(__import__("os").fspath(path)) == "ref.wav":
+        if (
+            not swapped
+            and __import__("os").path.basename(__import__("os").fspath(path)) == "ref.wav"
+        ):
             swapped = True
             references.rename(tmp_path / "references-original")
             references.symlink_to(outside, target_is_directory=True)
@@ -122,7 +138,9 @@ def test_validate_rejects_unsafe_transcript(tmp_path: Path, transcript: str) -> 
     write_wav(path)
 
     with pytest.raises(ReferenceValidationError) as error:
-        VieNeuReferenceValidator(tmp_path).validate("model-1", "staging/references/ref.wav", transcript)
+        VieNeuReferenceValidator(tmp_path).validate(
+            "model-1", "staging/references/ref.wav", transcript
+        )
 
     assert error.value.code == "reference_invalid"
 

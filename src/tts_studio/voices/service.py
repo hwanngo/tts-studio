@@ -49,7 +49,9 @@ class _ValidatedSavedVoiceDeletion:
 
 
 class SavedVoiceService:
-    def __init__(self, registry: SavedVoiceRegistry, references: ReferenceService, layout: StorageLayout) -> None:
+    def __init__(
+        self, registry: SavedVoiceRegistry, references: ReferenceService, layout: StorageLayout
+    ) -> None:
         self._registry = registry
         self._references = references
         self._layout = layout
@@ -86,9 +88,10 @@ class SavedVoiceService:
                     dir_fd=directory_fd,
                 )
                 assert source_fd is not None
-                with os.fdopen(source_fd, "rb") as source_file, os.fdopen(
-                    os.dup(destination_fd), "wb"
-                ) as output:
+                with (
+                    os.fdopen(source_fd, "rb") as source_file,
+                    os.fdopen(os.dup(destination_fd), "wb") as output,
+                ):
                     shutil.copyfileobj(source_file, output)
                 if not _directory_matches(directory, directory_fd):
                     raise UnsafeStoragePathError("Saved Voice directory identity changed")
@@ -98,11 +101,16 @@ class SavedVoiceService:
                         os.close(source_fd)
                 raise
             voice = self._registry.create(
-                voice_id=voice_id, model_id=model_id, label=label.strip(),
-                relative_path=relative_path, transcript=transcript,
+                voice_id=voice_id,
+                model_id=model_id,
+                label=label.strip(),
+                relative_path=relative_path,
+                transcript=transcript,
             )
             created = True
-            if not _published_file_matches(voices_fd, voice_id, directory_fd, filename, destination_fd):
+            if not _published_file_matches(
+                voices_fd, voice_id, directory_fd, filename, destination_fd
+            ):
                 raise UnsafeStoragePathError("Saved Voice publication identity changed")
             self._references.delete(reference_id)
             return voice
@@ -116,7 +124,9 @@ class SavedVoiceService:
                     ) from rollback_error
             if voices_fd is not None and directory_fd is not None and destination_fd is not None:
                 with contextlib.suppress(OSError, UnsafeStoragePathError):
-                    _remove_created_voice(voices_fd, voice_id, directory_fd, filename, destination_fd)
+                    _remove_created_voice(
+                        voices_fd, voice_id, directory_fd, filename, destination_fd
+                    )
             else:
                 _safe_remove(directory)
             raise
@@ -185,9 +195,9 @@ def _directory_matches(path: Path, descriptor: int) -> bool:
     except OSError:
         return False
     opened = os.fstat(descriptor)
-    return (
-        stat.S_ISDIR(metadata.st_mode)
-        and (metadata.st_dev, metadata.st_ino) == (opened.st_dev, opened.st_ino)
+    return stat.S_ISDIR(metadata.st_mode) and (metadata.st_dev, metadata.st_ino) == (
+        opened.st_dev,
+        opened.st_ino,
     )
 
 
@@ -219,10 +229,12 @@ def _published_file_matches(
         return False
     opened_directory = os.fstat(directory_fd)
     opened_destination = os.fstat(destination_fd)
-    return (
-        (directory.st_dev, directory.st_ino) == (opened_directory.st_dev, opened_directory.st_ino)
-        and (destination.st_dev, destination.st_ino)
-        == (opened_destination.st_dev, opened_destination.st_ino)
+    return (directory.st_dev, directory.st_ino) == (
+        opened_directory.st_dev,
+        opened_directory.st_ino,
+    ) and (destination.st_dev, destination.st_ino) == (
+        opened_destination.st_dev,
+        opened_destination.st_ino,
     )
 
 
@@ -261,9 +273,7 @@ def _open_saved_voice_for_deletion(
     try:
         layout.checked_directory("voices")
         root_fd = os.open(layout.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        voices_fd = os.open(
-            "voices", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd
-        )
+        voices_fd = os.open("voices", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
         directory_fd = os.open(
             voice_id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=voices_fd
         )
@@ -285,11 +295,10 @@ def _open_saved_voice_for_deletion(
             raise UnsafeStoragePathError("saved Voice path identity changed")
         payload = _read_descriptor(file_fd)
         final_metadata = os.fstat(file_fd)
-        if (
-            (final_metadata.st_dev, final_metadata.st_ino)
-            != (file_metadata.st_dev, file_metadata.st_ino)
-            or final_metadata.st_size != len(payload)
-        ):
+        if (final_metadata.st_dev, final_metadata.st_ino) != (
+            file_metadata.st_dev,
+            file_metadata.st_ino,
+        ) or final_metadata.st_size != len(payload):
             raise UnsafeStoragePathError("saved Voice path identity changed")
         root_metadata = os.fstat(root_fd)
         voices_metadata = os.fstat(voices_fd)
@@ -325,9 +334,7 @@ def _require_current_saved_voice_directory(candidate: _ValidatedSavedVoiceDeleti
     try:
         root = os.stat(candidate.layout.root, follow_symlinks=False)
         voices = os.stat(candidate.layout.voices, follow_symlinks=False)
-        directory = os.stat(
-            candidate.voice_id, dir_fd=candidate.voices_fd, follow_symlinks=False
-        )
+        directory = os.stat(candidate.voice_id, dir_fd=candidate.voices_fd, follow_symlinks=False)
     except OSError as error:
         raise SavedVoiceDeletionError(
             "the managed Saved Voice directory changed during deletion"
@@ -340,9 +347,7 @@ def _require_current_saved_voice_directory(candidate: _ValidatedSavedVoiceDeleti
         or not stat.S_ISDIR(directory.st_mode)
         or (directory.st_dev, directory.st_ino) != candidate.directory_identity
     ):
-        raise SavedVoiceDeletionError(
-            "the managed Saved Voice directory changed during deletion"
-        )
+        raise SavedVoiceDeletionError("the managed Saved Voice directory changed during deletion")
 
 
 def _restore_saved_voice_file(candidate: _ValidatedSavedVoiceDeletion) -> None:
@@ -369,9 +374,7 @@ def _restore_saved_voice_file(candidate: _ValidatedSavedVoiceDeletion) -> None:
         restored = _read_descriptor(descriptor)
         if not hashlib.sha256(restored).digest() == hashlib.sha256(candidate.payload).digest():
             raise OSError("restored Saved Voice checksum does not match")
-        published = os.stat(
-            candidate.name, dir_fd=candidate.directory_fd, follow_symlinks=False
-        )
+        published = os.stat(candidate.name, dir_fd=candidate.directory_fd, follow_symlinks=False)
         if (published.st_dev, published.st_ino) != (metadata.st_dev, metadata.st_ino):
             raise UnsafeStoragePathError("restored Saved Voice identity changed")
         _require_current_saved_voice_directory(candidate)

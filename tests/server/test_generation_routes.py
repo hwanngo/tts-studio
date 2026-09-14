@@ -32,21 +32,84 @@ from tts_studio.workers.generation import WorkerOperationError
 
 @pytest.fixture
 async def core(tmp_path: Path):
-    app = create_app(
-        Settings.resolve(tmp_path / ".tts-studio"), include_test_adapters=True
-    )
+    app = create_app(Settings.resolve(tmp_path / ".tts-studio"), include_test_adapters=True)
     database = Database(app.state.storage_layout.database_path)
     database.migrate()
     _activate_model(ModelRegistry(database))
-    async with app.router.lifespan_context(app), AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
         yield app, client
 
 
 async def _model_id(client: AsyncClient, app: Any) -> str:
     del client, app
     return "fixtures/compatible"
+
+
+@pytest.mark.asyncio
+async def test_generation_text_limit_before_persistence(core) -> None:
+    app, client = core
+    response = await client.post(
+        "/api/v1/generations",
+        json={"model_id": "fixtures/compatible", "voice_id": "fake-neutral", "text": "x" * 10_001},
+    )
+    assert response.status_code == 422
+    assert app.state.generation_registry.list_jobs() == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/v1/generations", "/v1/audio/speech"])
+@pytest.mark.parametrize("chunked", [False, True])
+async def test_generation_body_limit_before_json_parsing(core, path: str, chunked: bool) -> None:
+    app, client = core
+
+    async def chunks():
+        for _ in range(33):
+            yield b" " * 4096
+
+    response = await client.post(
+        path,
+        content=chunks() if chunked else b" " * (128 * 1024 + 1),
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "request_body_too_large"
+    assert app.state.generation_registry.list_jobs() == ()
+
+
+@pytest.mark.asyncio
+async def test_generation_retry_route_is_idempotent(core) -> None:
+    app, client = core
+    registry = app.state.generation_registry
+    original = registry.create_job(
+        model_id="fixtures/compatible",
+        engine_id="fake",
+        voice_id="fake-neutral",
+        text="recovered request",
+        correlation_id="original",
+    )
+    registry.mark_recovery_failure(original.id, {"code": "recovery_required", "retryable": True})
+    response = await client.post(f"/api/v1/generations/{original.id}/retry")
+    assert response.status_code == 202
+    successor = response.json()["id"]
+    assert successor != original.id
+    completed = await app.state.generation_service.wait(successor)
+    assert completed.state is GenerationState.COMPLETED
+    assert (await client.post(f"/api/v1/generations/{original.id}/retry")).json()["id"] == successor
+    assert (await client.post(f"/api/v1/generations/{successor}/retry")).status_code == 409
+    assert (await client.post("/api/v1/generations/missing/retry")).status_code == 404
+    assert len(registry.list_history()) == 1
+
+
+@pytest.mark.asyncio
+async def test_nonretained_generation_api_redacts_terminal_text(core) -> None:
+    app, client = core
+    completed = await _completed_generation(client, app, retain_artifact=False)
+    response = await client.get(f"/api/v1/generations/{completed['id']}")
+    assert response.json()["text"] == ""
+    assert (await client.get("/api/v1/generations")).json()[0]["text"] == ""
 
 
 def _activate_model(registry: ModelRegistry) -> None:
@@ -177,6 +240,7 @@ async def test_voice_preview_maps_validation_and_worker_errors(
     async def unsupported(*, model_id: str, voice_id: str, text: str) -> bytes:
         del model_id, voice_id, text
         from tts_studio.generation.service import GenerationCapabilityError
+
         raise GenerationCapabilityError("unsupported")
 
     monkeypatch.setattr(app.state.generation_service, "preview", unsupported)
@@ -188,7 +252,9 @@ async def test_voice_preview_maps_validation_and_worker_errors(
 
 
 @pytest.mark.asyncio
-async def test_voice_preview_maps_worker_failure(core: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_voice_preview_maps_worker_failure(
+    core: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     app, client = core
     from tts_studio.workers.generation import WorkerOperationError
 
@@ -208,17 +274,43 @@ async def test_voice_preview_maps_worker_failure(core: Any, monkeypatch: pytest.
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field,value", [("speed", 0.1), ("speed", 4.1), ("pitch", -1.1), ("pitch", 1.1), ("volume", -0.1), ("volume", 2.1)])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("speed", 0.1),
+        ("speed", 4.1),
+        ("pitch", -1.1),
+        ("pitch", 1.1),
+        ("volume", -0.1),
+        ("volume", 2.1),
+    ],
+)
 async def test_generation_rejects_out_of_range_options(core: Any, field: str, value: float) -> None:
     _app, client = core
-    response = await client.post("/api/v1/generations", json={"model_id": "fixtures/compatible", "voice_id": "fake-neutral", "text": "bounded", field: value})
+    response = await client.post(
+        "/api/v1/generations",
+        json={
+            "model_id": "fixtures/compatible",
+            "voice_id": "fake-neutral",
+            "text": "bounded",
+            field: value,
+        },
+    )
     _assert_error(response, 422, "generation_request_invalid")
 
 
 @pytest.mark.asyncio
 async def test_generation_rejects_requested_option_without_worker_capability(core: Any) -> None:
     _app, client = core
-    response = await client.post("/api/v1/generations", json={"model_id": "fixtures/compatible", "voice_id": "fake-neutral", "text": "unsupported", "speed": 1.1})
+    response = await client.post(
+        "/api/v1/generations",
+        json={
+            "model_id": "fixtures/compatible",
+            "voice_id": "fake-neutral",
+            "text": "unsupported",
+            "speed": 1.1,
+        },
+    )
     _assert_error(response, 503, "capability_unsupported")
 
 
@@ -281,12 +373,9 @@ async def test_generation_openapi_exposes_routes_and_stable_error_models(core: A
     assert generation_properties["volume"]["anyOf"][0] == {"type": "number"}
     assert generation_properties["volume"]["minimum"] == 0.0
     assert generation_properties["volume"]["maximum"] == 2.0
-    assert (
-        schema["paths"]["/api/v1/generations"]["post"]["responses"]["422"]["content"][
-            "application/json"
-        ]["schema"]
-        == {"$ref": "#/components/schemas/ErrorEnvelope"}
-    )
+    assert schema["paths"]["/api/v1/generations"]["post"]["responses"]["422"]["content"][
+        "application/json"
+    ]["schema"] == {"$ref": "#/components/schemas/ErrorEnvelope"}
 
 
 @pytest.mark.asyncio
@@ -427,9 +516,11 @@ async def test_artifact_download_maps_unsafe_storage_to_stable_error(
 
     def unsafe(_layout: Any, _name: str):
         from tts_studio.storage.layout import UnsafeStoragePathError
+
         raise UnsafeStoragePathError("redirected")
 
     from tts_studio.storage.layout import StorageLayout
+
     monkeypatch.setattr(StorageLayout, "checked_directory", unsafe)
     response = await client.get(f"/api/v1/artifacts/{artifact_id}/audio")
 
@@ -447,9 +538,11 @@ async def test_history_delete_maps_unsafe_storage_to_stable_error(
 
     def unsafe(_layout: Any, _name: str):
         from tts_studio.storage.layout import UnsafeStoragePathError
+
         raise UnsafeStoragePathError("redirected")
 
     from tts_studio.storage.layout import StorageLayout
+
     monkeypatch.setattr(StorageLayout, "checked_directory", unsafe)
     response = await client.delete(f"/api/v1/history/{artifact_id}")
 
@@ -673,7 +766,9 @@ async def test_artifact_download_closes_actual_snapshot_after_successful_deliver
 
 
 @pytest.mark.asyncio
-async def test_artifact_download_closes_thread_result_when_request_is_cancelled_during_open() -> None:
+async def test_artifact_download_closes_thread_result_when_request_is_cancelled_during_open() -> (
+    None
+):
     started = threading.Event()
     release = threading.Event()
     closed = asyncio.Event()
@@ -697,9 +792,7 @@ async def test_artifact_download_closes_thread_result_when_request_is_cancelled_
             return handle
 
     request = SimpleNamespace(
-        app=SimpleNamespace(
-            state=SimpleNamespace(generation_service=FakeGeneration())
-        )
+        app=SimpleNamespace(state=SimpleNamespace(generation_service=FakeGeneration()))
     )
     request_task = asyncio.create_task(download_artifact("artifact", request))
     assert await asyncio.to_thread(started.wait, 1)
@@ -738,9 +831,7 @@ async def test_artifact_download_closes_thread_result_after_repeated_cancellatio
             return handle
 
     request = SimpleNamespace(
-        app=SimpleNamespace(
-            state=SimpleNamespace(generation_service=FakeGeneration())
-        )
+        app=SimpleNamespace(state=SimpleNamespace(generation_service=FakeGeneration()))
     )
     request_task = asyncio.create_task(download_artifact("artifact", request))
     assert await asyncio.to_thread(started.wait, 1)
@@ -795,11 +886,14 @@ async def test_artifact_stream_closes_handle_once_after_successful_asgi_delivery
         send,
     )
 
-    assert b"".join(
-        message.get("body", b"")
-        for message in messages
-        if message["type"] == "http.response.body"
-    ) == b"payload"
+    assert (
+        b"".join(
+            message.get("body", b"")
+            for message in messages
+            if message["type"] == "http.response.body"
+        )
+        == b"payload"
+    )
     assert handle.close_calls == 1
 
 
@@ -997,7 +1091,7 @@ async def test_generation_routes_use_safe_errors_and_cancel_jobs(core: Any) -> N
         json={
             "model_id": model_id,
             "voice_id": "fake-neutral",
-            "text": "long " * 4000,
+            "text": "long " * 2000,
         },
     )
     job_id = created.json()["id"]
@@ -1023,11 +1117,15 @@ async def test_generation_route_exposes_ordinary_and_recovery_retryability(
         correlation_id="ordinary-failed-route-correlation",
     )
     registry.transition_job(ordinary.id, GenerationState.LOADING)
-    registry.transition_job(ordinary.id, GenerationState.FAILED, error={
-        "code": "provider_unavailable",
-        "message": "The engine Worker failed during synthesis.",
-        "retryable": False,
-    })
+    registry.transition_job(
+        ordinary.id,
+        GenerationState.FAILED,
+        error={
+            "code": "provider_unavailable",
+            "message": "The engine Worker failed during synthesis.",
+            "retryable": False,
+        },
+    )
     recovery = registry.create_job(
         job_id="recovery-failed-route-job",
         model_id="fixtures/compatible",
@@ -1037,11 +1135,15 @@ async def test_generation_route_exposes_ordinary_and_recovery_retryability(
         correlation_id="recovery-failed-route-correlation",
     )
     registry.transition_job(recovery.id, GenerationState.LOADING)
-    registry.transition_job(recovery.id, GenerationState.FAILED, error={
-        "code": "recovery_required",
-        "message": "An interrupted generation requires retry.",
-        "retryable": True,
-    })
+    registry.transition_job(
+        recovery.id,
+        GenerationState.FAILED,
+        error={
+            "code": "recovery_required",
+            "message": "An interrupted generation requires retry.",
+            "retryable": True,
+        },
+    )
 
     ordinary_response = await client.get(f"/api/v1/generations/{ordinary.id}")
     recovery_response = await client.get(f"/api/v1/generations/{recovery.id}")

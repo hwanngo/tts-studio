@@ -19,7 +19,5 @@ distribution tooling, and the bilingual Web UI.
 - [Development](development.md): repository layout, dependency tools, testing, and distribution
 - [ADRs](adr/): costly architecture decisions and their rationale
 
-Canonical domain terms live in [CONTEXT.md](../CONTEXT.md).
-
-The roadmap is a status and sequencing document, not an executable plan. Implementation details
-belong in the focused contract documents and in the tests that exercise the public seams.
+Canonical domain terms live in [CONTEXT.md](../CONTEXT.md). Implementation details belong in the
+focused contract documents and in the tests that exercise the public seams.

@@ -14,7 +14,7 @@ async def test_runtime_route_reports_safe_runtime_snapshot(tmp_path: Path) -> No
         app.router.lifespan_context(app),
         AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
     ):
-            response = await client.get("/api/v1/runtime")
+        response = await client.get("/api/v1/runtime")
     assert response.status_code == 200
     body = response.json()
     assert body["host"] == "127.0.0.1"

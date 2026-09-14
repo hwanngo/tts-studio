@@ -68,9 +68,9 @@ protocol-check:
 openapi-check:
     UV_PYTHON={{python}} uv run --python {{python}} python scripts/check_openapi.py
 
-# Run the baseline-aware mypy gate.
+# Run strict mypy across Core, shared packages, and all Worker source.
 mypy:
-    UV_PYTHON={{python}} uv run --python {{python}} python scripts/check_mypy_baseline.py
+    UV_PYTHON={{python}} uv run --python {{python}} mypy --platform linux
 
 # Run Ruff across the repository.
 lint:

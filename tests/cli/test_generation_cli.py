@@ -22,14 +22,27 @@ from tts_studio.config import Settings
 from tts_studio.models.registry import DownloadState, ModelRegistry
 from tts_studio.server.app import create_app
 from tts_studio.storage.db import Database
+from tts_studio.workers.adapters import AdapterDescriptor
+from tts_studio.workers.process import WorkerLaunchSpec
 
 runner = CliRunner()
+_CORE_STARTUP_TIMEOUT_SECONDS = 20
+_CORE_THREAD_JOIN_TIMEOUT_SECONDS = 10
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+_FAKE_ADAPTER = AdapterDescriptor(
+    "fake",
+    0,
+    WorkerLaunchSpec(
+        command=("uv", "run", "--project", "workers/fake", "tts-studio-fake-worker"),
+        cwd=_REPOSITORY_ROOT,
+    ),
+)
 
 
 def _identity_bound_unlink_available() -> bool:
     try:
         _ = ctypes.CDLL(None).funlinkat
-    except (AttributeError, OSError):
+    except AttributeError, OSError:
         return False
     return True
 
@@ -38,34 +51,37 @@ def _identity_bound_unlink_available() -> bool:
 def core_url(tmp_path: Path) -> Iterator[str]:
     if sys.platform == "win32":
         pytest.skip("threaded Uvicorn Core fixtures cannot start Worker adapters on Windows CI")
-    core = create_app(
-        Settings.resolve(tmp_path / ".tts-studio"), include_test_adapters=True
-    )
-    database = Database(core.state.storage_layout.database_path)
-    database.migrate()
-    _activate_model(ModelRegistry(database))
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
     listener.listen()
     host, port = listener.getsockname()
+    core = create_app(
+        Settings(data_dir=tmp_path / ".tts-studio", host=host, port=port),
+        adapters=(_FAKE_ADAPTER,),
+    )
+    database = Database(core.state.storage_layout.database_path)
+    database.migrate()
+    _activate_model(ModelRegistry(database))
     server = uvicorn.Server(uvicorn.Config(core, log_level="critical"))
     thread = Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
     thread.start()
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + _CORE_STARTUP_TIMEOUT_SECONDS
     while not server.started and time.monotonic() < deadline:
         time.sleep(0.01)
     if not server.started:
         server.should_exit = True
-        thread.join(timeout=5)
-        listener.close()
-        pytest.fail("Core did not start within five seconds")
+        thread.join(timeout=_CORE_THREAD_JOIN_TIMEOUT_SECONDS)
+        if not thread.is_alive():
+            listener.close()
+        pytest.fail("Core did not start within the startup timeout")
 
     try:
         yield f"http://{host}:{port}"
     finally:
         server.should_exit = True
-        thread.join(timeout=5)
-        listener.close()
+        thread.join(timeout=_CORE_THREAD_JOIN_TIMEOUT_SECONDS)
+        if not thread.is_alive():
+            listener.close()
 
 
 def _activate_model(registry: ModelRegistry) -> None:
@@ -120,9 +136,7 @@ def test_generation_command_help_excludes_style() -> None:
     assert "style" not in result.output.casefold()
 
 
-def test_voices_jobs_and_history_commands_use_public_core(
-    core_url: str, tmp_path: Path
-) -> None:
+def test_voices_jobs_and_history_commands_use_public_core(core_url: str, tmp_path: Path) -> None:
     model_id = "fixtures/compatible"
     voices = runner.invoke(
         app, ["voices", "list", "--model", model_id, "--json", "--url", core_url]
@@ -165,9 +179,7 @@ def test_voices_jobs_and_history_commands_use_public_core(
     history = runner.invoke(app, ["history", "list", "--json", "--url", core_url])
     assert history.exit_code == 0
     artifact_id = json.loads(history.output)[0]["id"]
-    deleted = runner.invoke(
-        app, ["history", "delete", artifact_id, "--json", "--url", core_url]
-    )
+    deleted = runner.invoke(app, ["history", "delete", artifact_id, "--json", "--url", core_url])
     if _identity_bound_unlink_available():
         assert deleted.exit_code == 0
         assert json.loads(deleted.output) == {"id": artifact_id, "deleted": True}

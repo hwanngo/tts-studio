@@ -125,7 +125,9 @@ class FakeModelService:
         if request.variant not in {"int8", "fp32"}:
             return engine_pb2.LoadModelResponse(
                 loaded=False,
-                error=self._generation_error("variant_unsupported", "The requested variant is unsupported"),
+                error=self._generation_error(
+                    "variant_unsupported", "The requested variant is unsupported"
+                ),
             )
         self._loaded_models[request.model_id] = request.variant
         return engine_pb2.LoadModelResponse(loaded=True)
@@ -137,7 +139,9 @@ class FakeModelService:
     def list_voices(self, model_id: str) -> engine_pb2.ListVoicesResponse:
         if model_id not in self._loaded_models:
             return engine_pb2.ListVoicesResponse(
-                error=self._generation_error("model_not_loaded", "The requested model is not loaded")
+                error=self._generation_error(
+                    "model_not_loaded", "The requested model is not loaded"
+                )
             )
         return engine_pb2.ListVoicesResponse(voices=[_PRESET_VOICE])
 
@@ -157,12 +161,16 @@ class FakeModelService:
                     or len(request.reference.transcript) > 2000
                 ):
                     raise ValueError("invalid transcript")
-            except (OSError, ValueError):
-                return self._generation_error("reference_invalid", "The reference file is unavailable")
+            except OSError, ValueError:
+                return self._generation_error(
+                    "reference_invalid", "The reference file is unavailable"
+                )
         elif request.voice_id != _PRESET_VOICE.id:
             return self._generation_error("voice_not_found", "The requested voice is unavailable")
         elif source != "voice_id":
-            return self._generation_error("invalid_request", "A preset voice or reference is required")
+            return self._generation_error(
+                "invalid_request", "A preset voice or reference is required"
+            )
         if not request.text.strip():
             return self._generation_error("invalid_request", "Synthesis text must not be empty")
         return None
@@ -172,7 +180,9 @@ class FakeModelService:
     ) -> engine_pb2.ValidateReferenceResponse:
         if request.model_id not in self._loaded_models:
             return engine_pb2.ValidateReferenceResponse(
-                error=self._generation_error("model_not_loaded", "The requested model is not loaded")
+                error=self._generation_error(
+                    "model_not_loaded", "The requested model is not loaded"
+                )
             )
         try:
             with self._open_reference(request.reference_path) as descriptor:
@@ -187,10 +197,12 @@ class FakeModelService:
                         raise ValueError("reference is too long")
                 byte_size = os.fstat(descriptor).st_size
             if request.HasField("transcript") and (
-                not request.transcript or "\x00" in request.transcript or len(request.transcript) > 2000
+                not request.transcript
+                or "\x00" in request.transcript
+                or len(request.transcript) > 2000
             ):
                 raise ValueError("invalid transcript")
-        except (OSError, ValueError, wave.Error):
+        except OSError, ValueError, wave.Error:
             return engine_pb2.ValidateReferenceResponse(
                 error=self._generation_error("reference_invalid", "The reference is invalid")
             )
@@ -272,8 +284,10 @@ class FakeModelService:
             and relative.parts[1].startswith(".alignment-")
             and relative.parts[1].endswith(".wav")
         )
-        if relative.is_absolute() or ".." in relative.parts or not (
-            managed_audio or alignment_snapshot
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or not (managed_audio or alignment_snapshot)
         ):
             raise ValueError("invalid audio path")
         root = self._staging_root.parent if self._staging_root is not None else None
@@ -291,7 +305,9 @@ class FakeModelService:
                 if directory_descriptor != root_descriptor:
                     os.close(directory_descriptor)
                 directory_descriptor = next_descriptor
-            descriptor = os.open(relative.parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_descriptor)
+            descriptor = os.open(
+                relative.parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_descriptor
+            )
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise ValueError("audio file is unavailable")
             yield descriptor
@@ -438,7 +454,7 @@ class FakeModelService:
                     total_bytes=None if fixture.slow else total_bytes,
                     message="Finalizing fixture manifest",
                 )
-        except (OSError, ValueError):
+        except OSError, ValueError:
             yield self._download_error("The staging destination could not be written")
             return
 
@@ -518,6 +534,7 @@ class FakeModelService:
     @contextmanager
     def _open_windows_destination(self, identifier: str) -> Iterator[_DirectoryWriter]:
         root_before = self._checked_staging_root()
+        assert self._staging_root is not None
         if _directory_identity(root_before) != self._root_identity:
             raise ValueError("fake adapter staging root identity changed")
         with _locked_windows_directory(self._staging_root):

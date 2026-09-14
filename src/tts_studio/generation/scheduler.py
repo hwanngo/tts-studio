@@ -25,9 +25,7 @@ class GenerationScheduler:
             raise RuntimeError("generation scheduler is closed")
         if job_id in self._tasks and not self._tasks[job_id].done():
             return
-        task = asyncio.create_task(
-            self._runner(job_id), name=f"generation-{job_id}"
-        )
+        task = asyncio.create_task(self._runner(job_id), name=f"generation-{job_id}")
         self._tasks[job_id] = task
         task.add_done_callback(lambda finished: self._discard_done(job_id, finished))
 

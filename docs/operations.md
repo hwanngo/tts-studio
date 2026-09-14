@@ -60,14 +60,38 @@ mismatched data directories produce actionable diagnostics rather than starting 
 
 ## Worker operations
 
-Models load lazily. Users can unload a model or restart its Workers. The VieNeu Worker
-uses one serialized runtime replica, explicit ONNX/CPU `int8` or `fp32` selection, and a pinned
-offline codec snapshot; configurable replicas remain deferred. ONNX thread count is independent
-of replica count.
+Models load lazily. Users can unload a model or restart its Workers. Each VieNeu Worker Replica
+serializes one active generation and uses explicit ONNX/CPU `int8` or `fp32` selection with a
+pinned offline codec snapshot. The desired replica count is configurable from one through eight;
+the supervisor schedules each healthy replica independently. ONNX thread count is independent of
+replica count.
 
-The supervisor performs bounded authenticated health checks, drains Workers before planned restarts, and propagates cancellation. An unexpected process exit or failed health check marks the replica unhealthy, records sanitized diagnostics, cleans up its managed launch files, and attempts up to three consecutive replacements with capped exponential backoff. Planned shutdown cancels watchers before cleanup, preventing restart races; exhausted replacements remain unhealthy until an explicit lifecycle action. Each POSIX launch durably records a pending unique owner claim before spawn, starts the Worker in an isolated process group, then finalizes the record with its PID. Startup reconciliation can recover the pending spawn window by locating exactly one group leader carrying that claim. It revalidates the claim and process-group identity immediately before signaling, retains uncertain records, and never signals an unrelated PID or group. Planned and failure cleanup signal the verified group, including helper descendants, and remove the owner record only after the original group members terminate. Windows launches retain authenticated direct-child lifecycle while Core owns the process handle, including graceful and forced reaping, but do not provide durable orphan recovery or descendant containment after Core loss. Sanitized startup/restart diagnostics are exposed through the runtime response and existing health/status surfaces; the supervisor does not publish restart-history events through Models, Jobs, CLI, or SSE.
+The supervisor performs bounded authenticated health checks, drains Workers before planned restarts, and propagates cancellation. An unexpected process exit or failed health check marks the replica unhealthy, records sanitized diagnostics, cleans up its managed launch files, and attempts up to three consecutive replacements with capped exponential backoff. Planned shutdown cancels watchers before cleanup, preventing restart races; exhausted replacements remain unhealthy until an explicit lifecycle action. Failed termination retains the quarantined process and its ownership resources so a subsequent stop can retry cleanup. A replica remains owned during failure cleanup, including when planned shutdown interrupts its watcher.
 
-Generation Jobs hold the Worker lease only for the active synthesis. Optional alignment Jobs for
+Each POSIX launch durably records a pending unique owner claim before spawn, starts the Worker in an isolated process group, then finalizes the record with its PID. Startup reconciliation can recover the pending spawn window by locating exactly one group leader carrying that claim. It revalidates the claim and process-group identity immediately before signaling, retains uncertain records, and never signals an unrelated PID or group. Planned and failure cleanup signal the verified group, including helper descendants, and remove the owner record only after group termination is verified.
+
+Windows launches use an unnamed, non-inheritable, kill-on-close Job Object with breakaway disabled. A trusted Core Python standard-library gate blocks on a private pipe until Job assignment succeeds; only then does it spawn the configured isolated Worker command. Assignment failure never starts engine code. Forced and planned process cleanup terminate the Job and verify that its active-process count reaches zero before closing the handle. Failed termination retains the Job handle for retry. Closing Core's last Job handle, including on Core exit, asks Windows to terminate contained descendants. There is no durable Windows orphan-owner record. The portable gate and cleanup-abstraction tests run on every hosted smoke; native Job descendant coverage requires a separately provisioned Windows runner and is skipped on other platforms. This uses the documented [Windows Job Object containment model](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+
+Sanitized startup/restart diagnostics are exposed through the runtime response and existing health/status surfaces; the supervisor does not publish restart-history events through Models, Jobs, CLI, or SSE.
+
+Generation and alignment operations wait for supervisor lease admission. Separate ready replicas
+can work concurrently; excess requests wait for capacity, and an unhealthy replica cannot be
+admitted or make its healthy siblings unavailable. A Generation Job holds its replica through
+synthesis, artifact finalization, and failure/unload cleanup. The same lease ordering protects
+alignment cleanup. Model-removal pins and leased-replica unload refusal still apply.
+
+Interrupted synthesis cancels the gRPC stream and allows at most 500 ms for authenticated
+`UnloadModel` to confirm native quiescence. A locally cancelled gRPC call or a READY Health response
+alone is not proof of native termination. If unloading does not confirm release, Core quarantines
+that replica and invokes the supervisor's hard-stop operation: verified POSIX group SIGKILL or
+Windows Job termination. Forced child reaping is bounded to five seconds per wait, and POSIX group
+drain checks are separately bounded. A termination/identity failure reports cleanup failure and
+prevents reuse and replacement; it never claims that the native call stopped. Successful forced
+cleanup permits the existing bounded replacement policy. Repeated stream-close callers wait for
+the same cleanup, and a later stop of an already terminated replica cannot affect its replacement.
+Cooperative cancellation unloads the model, so later use must load it again.
+
+Optional alignment Jobs for
 completed retained generations also pin the Model Installation while queued or running. Core copies
 the retained WAV to a private read-only managed snapshot for alignment, revalidates the original
 artifact identity before and after the Worker call, and removes only the private snapshot. Alignment
@@ -82,6 +106,12 @@ before model-download recovery scans shared staging, marks interrupted loading/g
 jobs with `recovery_required`, and leaves no partial artifact. A post-publication rollback-staging
 cleanup failure remains visible as `artifact_delete_failed`; the restored public WAV and metadata
 are retained for startup cleanup and retry.
+
+Retained-artifact deletion requires a no-follow, descriptor-relative identity check. POSIX hosts
+with that primitive can delete the validated entry atomically. CPython on Windows does not expose
+an equivalent primitive, so deletion and retention clearing fail closed there: the artifact and
+its metadata remain intact and the public API reports the cleanup failure rather than risking a
+path-replacement deletion.
 
 Temporary Reference Recordings live only below `staging/references/`. Core stores an opaque ID and
 safe metadata in SQLite; the transcript stays in the in-memory generation handoff. A validated
@@ -102,8 +132,10 @@ prerequisites are precise skips, never implicit downloads or a fallback to float
 
 The default listener accepts loopback IP literals and defaults to `127.0.0.1`. Non-loopback serving
 requires `TTS_STUDIO_API_TOKEN_ENV` to name a populated environment variable. The Core then
-requires a bearer token on every public API request; the CLI forwards it automatically. Remote
-browser token UX remains out of scope for this slice.
+requires a bearer token on every public API request; the CLI forwards it automatically. The Web UI
+prompts after its first authentication failure and keeps the supplied bearer token only in the
+current browser runtime; it never stores it in URLs or browser storage. See
+[the HTTP authentication contract](http-api.md#network-security).
 
 Worker gRPC ports are ephemeral and loopback-only. Every launch uses an explicit command and
 resolved working directory. The child receives only an allowlist of required platform environment
@@ -120,7 +152,44 @@ and intended administrators.
 Remote Provider Profiles store environment-variable names only. Core passes required provider
 values explicitly over the authenticated typed Worker request rather than restoring wholesale
 parent-environment inheritance.
-Diagnostic output redacts credentials, authorization headers, and sensitive upstream payloads.
+
+## GitHub security operations
+
+The repository-owned `.github/workflows/security.yml` defines CodeQL analysis for Python and
+JavaScript/TypeScript on a `main` push, its weekly schedule, or a manual dispatch. It deliberately
+has no pull-request trigger. A completed hosted run and uploaded results are required before CodeQL
+is treated as observed evidence. To preserve the 25-minute pull-request assurance ceiling and avoid
+a second runner, `.github/workflows/ci.yml` invokes the repository-local
+`scripts/scan_secrets.py` as an initial Linux-assurance step. The local scanner reads only Git-tracked
+text files, rejects every symbolic-link path component, has deterministic rules and a size limit in
+`security/secret-scan.toml`, and makes no network requests. The security maintainer owns its rules
+and must review a proposed exclusion or pattern change; a real credential finding requires rotation
+and removal, not a scanner suppression.
+
+Repository administrators must enable GitHub code scanning and secret scanning when the selected
+GitHub plan supports them. Enable push protection where available, keep the CodeQL workflow's
+SARIF upload permission enabled, and configure default setup only when it does not duplicate this
+repository's CodeQL workflow. The platform scanners complement rather than replace the checked-in
+workflow: GitHub secret scanning can inspect history and pushes that CI never sees.
+
+Security alerts are owned by the repository security maintainer. Triage new CodeQL or secret
+scanning alerts within one business day: validate the finding, revoke/rotate exposed credentials
+immediately, create a tracked remediation item for confirmed code issues, and document a precise
+false-positive dismissal in GitHub. Treat an alert that cannot be reproduced as open until its
+data flow or credential provenance is understood.
+
+The cache-pinned VieNeu hardware definition is `.github/workflows/vieneu-hardware.yml`. It is
+scheduled weekly or may be manually dispatched, never runs for pull requests, and requires all four
+runner labels: `self-hosted`, `linux`, `x64`, and `tts-studio-vieneu-hardware`. A controlled runner
+must be provisioned with the exact `/var/lib/tts-studio/vieneu-cache` directory and regular
+`.vieneu-model-cache-marker`, Python 3.14, `uv`, and the offline locked Python dependencies before
+the definition can run. It validates marker JSON, exact model/codec/SDK revisions, and every
+required regular, non-symbolic-link model, codec, and cloning file before `pytest` starts. Cloning
+requires both `cloning/denoiser.onnx` and `cloning/speaker_encoder.onnx` below `models/vieneu`,
+because runtime loading opens both even when the gate uses a preset Voice. A successful
+recent hosted execution is a release-candidate prerequisite; repair or re-provision the runner/cache
+rather than allowing a download, a skipped prerequisite, or a broader trigger. Diagnostic output
+redacts credentials, authorization headers, and sensitive upstream payloads.
 
 The first remote provider adapter is `openai_compatible`. It runs in its own locked `uv` project,
 accepts typed provider configuration in the authenticated synthesis RPC, calls the provider's
@@ -135,20 +204,6 @@ unresolved, or otherwise disallowed destinations. Provider cancellation waits at
 resolver or transport operation to drain; an operation still blocked after that deadline quarantines
 the Worker, makes Health not ready for supervised replacement, and checks cancellation again before
 any credentialed connection can continue.
-
-## Audit remediation backlog
-
-The remaining security and reliability backlog is intentionally maintained here as the canonical
-backlog. Completed remediation includes owner-only managed-directory and identity-bound file
-operations, readiness-file hardening, crash/orphan supervision with bounded replacement, bounded
-direct Worker/reference inputs, migration-gap detection, protocol compatibility checks, provider
-egress policy, and cancellation quarantine. Remaining work is limited to a stronger operation that
-can forcibly terminate a native SDK call and a native Generation retry operation. The implemented
-cancellation contract waits a bounded interval, quarantines a Worker/runtime that ignores
-cancellation, and fails unload/reuse closed; it does not pretend the native call stopped. Until a
-native Generation retry operation exists, ordinary failed and cancelled Generation Jobs are
-non-retryable, while startup-recovery failures remain retryable. Other documents link here instead
-of maintaining a second backlog.
 
 ## Settings and service administration
 
@@ -172,6 +227,22 @@ silently changing state.
 
 Generation text and final WAV are retained locally by default. A request can opt out. One-off cloning references are temporary and deleted after generation. Saved cloned Voices retain only the managed reference or prepared data required by their Adapter and record consent acknowledgment.
 
+Core bounds generation text at 10,000 characters and native/OpenAI generation JSON bodies at
+128 KiB. When retention is disabled, queued and active jobs keep text for durable execution, then
+atomically replace it with an empty string when completed, failed, or cancelled. Migration 013
+also redacts non-retained jobs that were already terminal. Retained jobs keep their text. This is
+logical SQLite redaction, not a guarantee of forensic erasure from old backups or storage media.
+
+The explicit Generation retry endpoint creates one successor per eligible failed attempt and
+persists that relationship with a unique SQLite index. Retried jobs receive new IDs and own their
+own artifacts; original attempts and their errors remain inspectable. A crash between persisting
+the queued successor and scheduling it is handled by ordinary queued-job startup recovery.
+Requests for a job with an existing successor return that successor without synthesizing again.
+If a transient retained attempt leaves a runtime that cannot unload, successful supervised process
+termination preserves the original retryable Worker error. Explicit retry waits for cleanup and
+healthy replacement capacity before handing a fresh request to a new lease. No audio stream is
+replayed automatically, and failed termination becomes non-retryable `cleanup_failed`.
+
 Voice previews are a separate temporary path. Core validates the short request, synthesizes a WAV,
 and returns it directly without creating a Generation Job, Audio Artifact, or History row. The
 selected model is unloaded after the preview, and preview bytes are not copied into managed `audio/`
@@ -184,7 +255,7 @@ Worker and removes the private temporary file before the job becomes terminal. M
 refused while any non-terminal Generation Job pins that Model Installation.
 
 If active-generation cleanup fails, the job reports a non-retryable `cleanup_failed` error instead
-of successful cancellation because no native Generation retry operation exists. If startup recovery
+of successful cancellation. The generation retry endpoint refuses this state. If startup recovery
 finds cleanup still incomplete, it records a retryable recovery failure; correct the filesystem
 problem and restart Core to retry recovery cleanup.
 

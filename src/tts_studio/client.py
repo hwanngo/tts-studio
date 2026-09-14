@@ -41,6 +41,8 @@ _CANCELLATION_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.
 _REMOVAL_TIMEOUT = httpx.Timeout(connect=5.0, read=60.0, write=5.0, pool=5.0)
 _GENERATION_CREATION_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=5.0, pool=5.0)
 _ARTIFACT_DOWNLOAD_TIMEOUT = httpx.Timeout(connect=5.0, read=60.0, write=5.0, pool=5.0)
+
+
 class _UnsetType:
     """Private marker distinguishing omitted arguments from explicit nulls."""
 
@@ -102,7 +104,9 @@ class CoreClient:
     def clear_retention(self) -> ClearRetentionResponse:
         """Delete every retained artifact after explicit confirmation."""
         return self._request_model(
-            "POST", "/api/v1/settings/retention/clear", ClearRetentionResponse,
+            "POST",
+            "/api/v1/settings/retention/clear",
+            ClearRetentionResponse,
             json={"confirm": True},
         )
 
@@ -125,7 +129,9 @@ class CoreClient:
 
     def _service_operation(self, operation: str) -> ServiceOperationResponse:
         return self._request_model(
-            "POST", f"/api/v1/service/{operation}", ServiceOperationResponse,
+            "POST",
+            f"/api/v1/service/{operation}",
+            ServiceOperationResponse,
             json={"confirm": True},
         )
 
@@ -193,9 +199,7 @@ class CoreClient:
         )
 
     def list_voices(self, model_id: str) -> list[VoiceResponse]:
-        response = self._request(
-            "GET", "/api/v1/voices", params={"model_id": model_id}
-        )
+        response = self._request("GET", "/api/v1/voices", params={"model_id": model_id})
         try:
             return TypeAdapter(list[VoiceResponse]).validate_python(response.json())
         except (TypeError, ValueError) as error:
@@ -215,9 +219,7 @@ class CoreClient:
         return response.content
 
     def list_saved_voices(self, model_id: str) -> list[SavedVoiceResponse]:
-        response = self._request(
-            "GET", "/api/v1/saved-voices", params={"model_id": model_id}
-        )
+        response = self._request("GET", "/api/v1/saved-voices", params={"model_id": model_id})
         try:
             return TypeAdapter(list[SavedVoiceResponse]).validate_python(response.json())
         except (TypeError, ValueError) as error:
@@ -230,23 +232,43 @@ class CoreClient:
         except (TypeError, ValueError) as error:
             raise _invalid_response(response) from error
 
-    def create_provider(self, *, label: str, base_url: str, model: str, api_key_env: str) -> ProviderResponse:
+    def create_provider(
+        self, *, label: str, base_url: str, model: str, api_key_env: str
+    ) -> ProviderResponse:
         return self._request_model(
-            "POST", "/api/v1/providers", ProviderResponse,
-            json={"kind": "openai_compatible", "label": label, "base_url": base_url,
-                  "model": model, "api_key_env": api_key_env},
+            "POST",
+            "/api/v1/providers",
+            ProviderResponse,
+            json={
+                "kind": "openai_compatible",
+                "label": label,
+                "base_url": base_url,
+                "model": model,
+                "api_key_env": api_key_env,
+            },
         )
 
-    def update_provider(self, provider_id: str, *, label: str, base_url: str, model: str, api_key_env: str) -> ProviderResponse:
+    def update_provider(
+        self, provider_id: str, *, label: str, base_url: str, model: str, api_key_env: str
+    ) -> ProviderResponse:
         return self._request_model(
-            "PATCH", f"/api/v1/providers/{quote(provider_id, safe='')}", ProviderResponse,
-            json={"kind": "openai_compatible", "label": label, "base_url": base_url,
-                  "model": model, "api_key_env": api_key_env},
+            "PATCH",
+            f"/api/v1/providers/{quote(provider_id, safe='')}",
+            ProviderResponse,
+            json={
+                "kind": "openai_compatible",
+                "label": label,
+                "base_url": base_url,
+                "model": model,
+                "api_key_env": api_key_env,
+            },
         )
 
     def validate_provider(self, provider_id: str) -> ProviderResponse:
         return self._request_model(
-            "POST", f"/api/v1/providers/{quote(provider_id, safe='')}/validate", ProviderResponse,
+            "POST",
+            f"/api/v1/providers/{quote(provider_id, safe='')}/validate",
+            ProviderResponse,
         )
 
     def delete_provider(self, provider_id: str) -> None:
@@ -381,7 +403,7 @@ class CoreClient:
 def _parse_error(response: httpx.Response) -> ErrorBody:
     try:
         return ErrorEnvelope.model_validate(response.json()).error
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         correlation_id = response.headers.get("X-Correlation-ID", "unavailable")
         return ErrorBody(
             code="api_error",

@@ -101,9 +101,7 @@ async def test_refuses_a_non_loopback_host(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_publishes_bound_port_and_removes_readiness_file(tmp_path: Path) -> None:
     ready_file = tmp_path / "run" / "worker-ready.json"
-    worker = asyncio.create_task(
-        serve_worker(TestServicer(), "127.0.0.1", 0, "secret", ready_file)
-    )
+    worker = asyncio.create_task(serve_worker(TestServicer(), "127.0.0.1", 0, "secret", ready_file))
 
     async with asyncio.timeout(1):
         while not ready_file.exists():
@@ -123,9 +121,7 @@ async def test_publishes_bound_port_and_removes_readiness_file(tmp_path: Path) -
 @pytest.mark.asyncio
 async def test_rejects_unauthenticated_rpc(tmp_path: Path) -> None:
     ready_file = tmp_path / "worker-ready.json"
-    worker = asyncio.create_task(
-        serve_worker(TestServicer(), "127.0.0.1", 0, "secret", ready_file)
-    )
+    worker = asyncio.create_task(serve_worker(TestServicer(), "127.0.0.1", 0, "secret", ready_file))
 
     async with asyncio.timeout(1):
         while not ready_file.exists():

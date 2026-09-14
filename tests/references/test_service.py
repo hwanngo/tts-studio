@@ -24,7 +24,9 @@ def _service(tmp_path: Path) -> tuple[StorageLayout, ReferenceService]:
     return layout, ReferenceService(database, layout)
 
 
-def test_upload_is_core_owned_hashed_exclusive_and_keeps_transcript_in_memory(tmp_path: Path) -> None:
+def test_upload_is_core_owned_hashed_exclusive_and_keeps_transcript_in_memory(
+    tmp_path: Path,
+) -> None:
     layout, service = _service(tmp_path)
     payload = b"reference-audio"
     recording = service.create_upload(
@@ -37,7 +39,9 @@ def test_upload_is_core_owned_hashed_exclusive_and_keeps_transcript_in_memory(tm
     assert recording.sha256 == hashlib.sha256(payload).hexdigest()
     assert recording.relative_path == f"staging/references/{recording.id}"
     with service._database.read() as connection:
-        row = connection.execute("SELECT * FROM reference_recordings WHERE id = ?", (recording.id,)).fetchone()
+        row = connection.execute(
+            "SELECT * FROM reference_recordings WHERE id = ?", (recording.id,)
+        ).fetchone()
     assert row["transcript_present"] == 1
     assert "hello" not in repr(tuple(row))
 

@@ -1,0 +1,35 @@
+name: Security scanning
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '41 3 * * 4'
+  workflow_dispatch:
+
+# CodeQL needs only the permission required to upload its SARIF results. The
+# platform downgrades this automatically for untrusted pull requests.
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: CodeQL analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
+        with:
+          languages: python, javascript-typescript
+      - name: Analyze with CodeQL
+        uses: github/codeql-action/analyze@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0

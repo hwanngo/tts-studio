@@ -56,7 +56,8 @@ test("keeps controls separate, previews the selected voice, and exposes success"
   vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:preview"), revokeObjectURL: vi.fn() });
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url === "/api/v1/models") return Promise.resolve(json([{ id: "one", repository_id: "fixtures/one" }]));
+    if (url === "/api/v1/models") return Promise.resolve(json([{ id: "one", repository_id: "fixtures/one", engine_installation_id: "fake@1" }]));
+    if (url === "/api/v1/runtime") return Promise.resolve(json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis", "preset_voices"] }] }));
     if (url === "/api/v1/voices?model_id=one") return Promise.resolve(json([
       { id: "v1", label: "Voice One", capabilities: [] },
       { id: "v2", label: "Voice Two", capabilities: ["streaming"] },
@@ -92,7 +93,8 @@ test("announces the active preview and revokes replaced and unmounted object URL
   const preview = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => new Promise<Response>((resolve) => responses.push(resolve)));
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === "/api/v1/models") return Promise.resolve(json([{ id: "one", repository_id: "fixtures/one" }]));
+    if (url === "/api/v1/models") return Promise.resolve(json([{ id: "one", repository_id: "fixtures/one", engine_installation_id: "fake@1" }]));
+    if (url === "/api/v1/runtime") return Promise.resolve(json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis", "preset_voices"] }] }));
     if (url === "/api/v1/voices?model_id=one") return Promise.resolve(json([{ id: "v1", label: "Voice One", capabilities: [] }]));
     if (url === "/api/v1/voices/preview") return preview(input);
     throw new Error(`Unexpected request: ${url}`);
@@ -119,7 +121,8 @@ test("shows an accessible preview failure and blocks a second request", async ()
   const preview = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => new Promise<Response>((_, reject) => { rejectPreview = reject; }));
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === "/api/v1/models") return Promise.resolve(json([{ id: "one", repository_id: "fixtures/one" }]));
+    if (url === "/api/v1/models") return Promise.resolve(json([{ id: "one", repository_id: "fixtures/one", engine_installation_id: "fake@1" }]));
+    if (url === "/api/v1/runtime") return Promise.resolve(json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis", "preset_voices"] }] }));
     if (url === "/api/v1/voices?model_id=one") return Promise.resolve(json([
       { id: "v1", label: "Voice One", capabilities: [] }, { id: "v2", label: "Voice Two", capabilities: [] },
     ]));
@@ -158,7 +161,8 @@ test("keeps the selected model and sample text when locale changes without refet
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
     calls.push(url);
-    if (url === "/api/v1/models") return Promise.resolve(json([{ id: "one", repository_id: "fixtures/one" }]));
+    if (url === "/api/v1/models") return Promise.resolve(json([{ id: "one", repository_id: "fixtures/one", engine_installation_id: "fake@1" }]));
+    if (url === "/api/v1/runtime") return Promise.resolve(json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis", "preset_voices"] }] }));
     if (url === "/api/v1/voices?model_id=one") return Promise.resolve(json([{ id: "v1", label: "Voice One", capabilities: [] }]));
     throw new Error(`Unexpected request: ${url}`);
   }));
@@ -172,4 +176,46 @@ test("keeps the selected model and sample text when locale changes without refet
   expect(screen.getByLabelText("Văn bản nghe thử")).toHaveValue("Custom sample");
   expect(calls.length).toBe(before);
   await i18n.changeLanguage("en-US");
+});
+
+test("gates preview with a localized reason when the selected Worker lacks preview capabilities", async () => {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/v1/models") return Promise.resolve(json([{ id: "one", repository_id: "fixtures/one", engine_installation_id: "fake@1" }]));
+    if (url === "/api/v1/runtime") return Promise.resolve(json({ workers: [{ engine_id: "fake", capabilities: [] }] }));
+    if (url === "/api/v1/voices?model_id=one") return Promise.resolve(json([{ id: "v1", label: "Voice One", capabilities: [] }, { id: "v2", label: "Voice Two", capabilities: [] }]));
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+  render(<VoicesPage />);
+
+  await waitFor(() => expect(screen.getAllByRole("button", { name: /preview/i })).toHaveLength(2));
+  const buttons = screen.getAllByRole("button", { name: /Preview Voice/ });
+  expect(buttons).toHaveLength(2);
+  expect(buttons).toEqual(expect.arrayContaining([expect.any(HTMLButtonElement)]));
+  const descriptions = buttons.map((button) => button.getAttribute("aria-describedby"));
+  expect(descriptions.every((id) => id && document.getElementById(id))).toBe(true);
+  expect(new Set(descriptions).size).toBe(2);
+  for (const button of buttons) expect(button).toBeDisabled();
+  for (const description of descriptions) {
+    expect(document.getElementById(description ?? "")).toHaveTextContent("Preview is unavailable: selected Worker does not support preset voice streaming.");
+  }
+});
+
+test("retries unknown runtime capabilities after voice discovery", async () => {
+  let runtimeCalls = 0;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/v1/models") return Promise.resolve(json([{ id: "one", repository_id: "fixtures/one", engine_installation_id: "fake@1" }]));
+    if (url === "/api/v1/runtime") {
+      runtimeCalls += 1;
+      return Promise.resolve(runtimeCalls === 1 ? json({ error: { code: "request_failed" } }, 503) : json({ workers: [{ engine_id: "fake", capabilities: ["streaming_synthesis", "preset_voices"] }] }));
+    }
+    if (url === "/api/v1/voices?model_id=one") return Promise.resolve(json([{ id: "v1", label: "Voice One", capabilities: [] }]));
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+  render(<VoicesPage />);
+
+  const preview = await screen.findByRole("button", { name: "Preview Voice One" });
+  await waitFor(() => expect(preview).toBeEnabled());
+  expect(runtimeCalls).toBeGreaterThanOrEqual(2);
 });
