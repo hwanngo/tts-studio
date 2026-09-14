@@ -17,6 +17,7 @@ distribution tooling, and the bilingual Web UI.
 - [Model management](model-management.md): compatibility, revisions, downloads, and cache
 - [Operations](operations.md): data directory, processes, startup, networking, and security
 - [Development](development.md): repository layout, dependency tools, testing, and distribution
+- [Project audit](audit.md): current risks, strengths, verification evidence, and remediation order
 - [ADRs](adr/): costly architecture decisions and their rationale
 
 Canonical domain terms live in [CONTEXT.md](../CONTEXT.md).
