@@ -17,11 +17,21 @@ import pytest
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _BUILD_SCRIPT = _REPOSITORY_ROOT / "scripts" / "build_distribution.py"
-_REMOTE_URL = re.compile(r"(?:https?:)?//[^\s\"'()]+")
+_CSS_URL = re.compile(r"url\(\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s)]+))\s*\)", re.IGNORECASE)
+_CSS_IMPORT = re.compile(r"@import\s+(?:\"([^\"]*)\"|'([^']*)')", re.IGNORECASE)
+_HTML_URL_ATTRIBUTE = re.compile(
+    r"\b(?:href|src)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))", re.IGNORECASE
+)
 
 
 def _remote_urls(document: str) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(_REMOTE_URL.findall(document)))
+    matches = (
+        *_CSS_URL.findall(document),
+        *_CSS_IMPORT.findall(document),
+        *_HTML_URL_ATTRIBUTE.findall(document),
+    )
+    urls = tuple(dict.fromkeys(next(value for value in match if value) for match in matches))
+    return tuple(url for url in urls if url.casefold().startswith(("http:", "https:", "//")))
 
 
 def _environment_executable(environment: Path, name: str) -> Path:
